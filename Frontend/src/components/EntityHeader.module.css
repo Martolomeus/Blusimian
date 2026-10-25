@@ -1,0 +1,52 @@
+.header {
+  margin-bottom: var(--space-12);
+}
+
+.backLink {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  display: inline-block;
+  margin-bottom: var(--space-6);
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.titleIcon {
+  color: var(--color-brand-navy);
+  flex-shrink: 0;
+}
+
+.title {
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-bold);
+  margin: 0;
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.subtitle {
+  /* Indent past the icon so the subtitle lines up under the title text. */
+  margin-top: var(--space-2);
+  margin-left: calc(28px + var(--space-4));
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.subtitleItem:not(:last-child)::after {
+  content: "·";
+  margin: 0 var(--space-3);
+  color: var(--color-text-subtle);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}

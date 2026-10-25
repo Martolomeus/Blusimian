@@ -1,0 +1,474 @@
+/* Entity layouts: the settings list and the layout editor. */
+
+/* ── Shared ────────────────────────────────────────────────────────────────── */
+
+/* "Default", data-type and similar pills. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-hover-bg);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.badgeDefault {
+  background: var(--color-btn-soft-bg);
+  color: var(--color-text);
+}
+
+.badgeDefault svg {
+  color: var(--color-btn-primary-bg);
+}
+
+.errorBanner {
+  background: var(--color-error-bg);
+  color: var(--color-error-text);
+  border: 1px solid var(--color-error-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--font-size-sm);
+}
+
+/* An icon-only ghost button: square-ish, muted until hovered. */
+.iconButton {
+  padding: var(--space-2);
+  color: var(--color-text-muted);
+}
+
+.iconButton:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+.inputError {
+  margin-top: 3px;
+  font-size: var(--font-size-xs);
+  color: var(--color-error);
+}
+
+/* ── Settings list ─────────────────────────────────────────────────────────── */
+
+.group {
+  margin-bottom: var(--space-14);
+}
+
+.groupHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 2px solid var(--color-table-header-border);
+}
+
+.groupIcon {
+  flex-shrink: 0;
+  color: var(--color-brand-navy);
+}
+
+.groupTitle {
+  flex: 1;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+
+.groupHeader + .errorBanner {
+  margin-top: var(--space-4);
+}
+
+.groupEmpty {
+  padding: var(--space-5) var(--space-6);
+}
+
+.rows {
+  list-style: none;
+}
+
+/* Same columns in every row and every group: label, badge, counts, actions. */
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) 90px minmax(0, 2fr) auto;
+  align-items: center;
+  gap: var(--space-6);
+  min-height: 44px;
+  padding: var(--space-2) var(--space-6);
+  border-bottom: 1px solid var(--color-row-border);
+  font-size: var(--font-size-base);
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--color-row-hover);
+}
+
+.rowLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowMeta {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.rowActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  cursor: default;
+}
+
+.rowActions button {
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-muted);
+}
+
+.rowActions button:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+/* ── Editor: header ────────────────────────────────────────────────────────── */
+
+.editorHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-10);
+}
+
+.editorIcon {
+  flex-shrink: 0;
+  margin-top: 5px;
+  color: var(--color-brand-navy);
+}
+
+.editorTitle {
+  flex: 1;
+  min-width: 0;
+}
+
+.editorTitleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* The layout's name, as the page title; it shows it is editable on hover and focus. */
+.titleInput {
+  field-sizing: content;
+  min-width: 8ch;
+  max-width: 100%;
+  padding: 0 var(--space-3);
+  margin-left: calc(-1 * var(--space-3) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.4;
+}
+
+.titleInput:hover {
+  border-color: var(--color-border);
+}
+
+.titleInput:focus {
+  outline: 2px solid var(--color-text);
+  outline-offset: 1px;
+  background: var(--color-bg);
+}
+
+.titleInputError,
+.titleInputError:hover {
+  border-color: var(--color-error);
+}
+
+.editorSubtitle {
+  margin-top: var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.editorActions {
+  display: flex;
+  gap: var(--space-3);
+  flex-shrink: 0;
+  padding-top: var(--space-2);
+}
+
+.editorError {
+  margin-bottom: var(--space-8);
+}
+
+/* ── Editor: canvas ────────────────────────────────────────────────────────── */
+
+.editorBody {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--space-12);
+  align-items: start;
+}
+
+.canvas {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.addSection {
+  align-self: flex-start;
+}
+
+.section {
+  padding: var(--space-6) var(--space-8) var(--space-8);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.sectionLabel {
+  flex: 1;
+  min-width: 0;
+}
+
+.columnSelect {
+  flex: 0 0 130px;
+}
+
+.sectionDelete {
+  height: 37px;
+  padding: 0 var(--space-4);
+  color: var(--color-text-muted);
+}
+
+.sectionDelete:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+/* A drag handle: the pointer grabs it, the keyboard focuses it and presses Space. */
+.handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 37px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: grab;
+  touch-action: none;
+}
+
+.handle:hover {
+  background: var(--color-hover-bg);
+  color: var(--color-text);
+}
+
+.handle:focus-visible {
+  outline: 2px solid var(--color-sidebar-active);
+  outline-offset: 1px;
+}
+
+/* The same grid as LayoutSection: fields fill row by row. */
+.chipGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4) var(--space-8);
+}
+
+.twoColumns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 38px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  font-size: var(--font-size-base);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.chip:hover {
+  border-color: var(--color-text-muted);
+}
+
+.chip .handle {
+  width: 22px;
+  height: 28px;
+}
+
+.fieldLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium);
+}
+
+.requiredMark {
+  margin-left: calc(-1 * var(--space-2));
+  color: var(--color-error);
+  font-weight: var(--font-weight-bold);
+}
+
+.dropZone {
+  padding: var(--space-10) var(--space-8);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+/* While dragging, the item's own slot shows where it will land. */
+.dragSource {
+  opacity: 0.4;
+}
+
+.chipPlaceholder {
+  border-style: dashed;
+  border-color: var(--color-sidebar-active);
+  background: var(--color-row-hover);
+}
+
+.chipPlaceholder > * {
+  visibility: hidden;
+}
+
+.dragOverlay {
+  box-shadow: var(--shadow-lg);
+  cursor: grabbing;
+}
+
+.sectionOverlay {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-lg);
+  color: var(--color-text);
+  font-size: var(--font-size-md);
+  cursor: grabbing;
+}
+
+/* ── Editor: field palette ─────────────────────────────────────────────────── */
+
+.palette {
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 2 * var(--app-gap) - var(--space-16));
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-8) var(--space-8);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
+}
+
+.paletteTitle {
+  margin-bottom: var(--space-6);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.paletteTarget {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-subtle);
+}
+
+.paletteTargetSelect {
+  flex: 1;
+  min-width: 0;
+}
+
+.paletteWarning {
+  margin-bottom: var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+  font-size: var(--font-size-sm);
+}
+
+.paletteList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.paletteItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.paletteItem:hover {
+  background: var(--color-hover-bg);
+}
+
+.paletteItemRequired,
+.paletteItemRequired:hover {
+  background: var(--color-warning-bg);
+}
+
+.paletteEmpty {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+/* Matches LayoutSection's breakpoint. */
+@media (max-width: 900px) {
+  .twoColumns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .editorBody {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .palette {
+    position: static;
+    max-height: none;
+  }
+}

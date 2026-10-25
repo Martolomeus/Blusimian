@@ -1,0 +1,54 @@
+/* Shared by every field type's Display and Input. */
+
+.input {
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-sm);
+  padding: 5px var(--space-4);
+  font-family: inherit;
+  font-size: var(--font-size-base);
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.input:focus {
+  outline: 2px solid var(--color-btn-primary-bg);
+  outline-offset: -1px;
+}
+
+.inputError {
+  border-color: var(--color-error);
+}
+
+.textarea {
+  min-height: 96px;
+  resize: vertical;
+  line-height: var(--line-height-base);
+}
+
+.checkbox {
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  accent-color: var(--color-btn-primary-bg);
+}
+
+.link {
+  color: var(--color-btn-primary-bg);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.longText {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--color-text-muted);
+}

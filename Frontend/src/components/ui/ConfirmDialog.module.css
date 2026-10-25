@@ -1,0 +1,11 @@
+.message {
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  color: var(--color-text);
+}
+
+.footer {
+  display: flex;
+  gap: var(--space-4);
+  justify-content: flex-end;
+}
