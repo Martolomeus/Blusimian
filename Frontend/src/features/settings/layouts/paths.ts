@@ -1,27 +1,21 @@
-import { ENTITIES } from "@/lib/entity/entityConfig";
 import type { EntityType } from "@/lib/entity/types";
+import { entitySettingsPath } from "../paths";
 
-// The layout pages' URLs, shared by the list and the editor. A layout that isn't stored
-// yet has no id: its editor is /new, told in the query what to start from.
+// The layout editor's URLs, under the entity's settings page. A layout that isn't stored
+// yet has no id: its editor is /new, with ?from=<id> when it starts as a copy.
 
-export const LAYOUTS_PATH = "/settings/layouts";
-
-export function layoutPath(id: string): string {
-  return `${LAYOUTS_PATH}/${id}`;
+/** /settings/contacts/layouts/<id> */
+export function layoutPath(type: EntityType, id: string): string {
+  return `${entitySettingsPath(type)}/layouts/${id}`;
 }
 
-/** A blank layout of an entity, or a copy of a stored layout. */
-export type NewLayoutStart = { entity: EntityType } | { from: string };
-
-export function newLayoutPath(start: NewLayoutStart): string {
-  const query = "from" in start ? ["from", start.from] : ["entity", start.entity.toLowerCase()];
-  return `${LAYOUTS_PATH}/new?${new URLSearchParams([query])}`;
+/** A blank layout of the entity, or a copy of one of its layouts. /settings/contacts/layouts/new[?from=<id>] */
+export function newLayoutPath(type: EntityType, from?: string): string {
+  const path = `${entitySettingsPath(type)}/layouts/new`;
+  return from ? `${path}?${new URLSearchParams({ from })}` : path;
 }
 
-/** What a /new URL says to start from, or null when it names no layout and no known entity. */
-export function newLayoutStart(params: URLSearchParams): NewLayoutStart | null {
-  const from = params.get("from");
-  if (from) return { from };
-  const entity = params.get("entity")?.toUpperCase();
-  return entity && Object.hasOwn(ENTITIES, entity) ? { entity: entity as EntityType } : null;
+/** The ?from id of a /new URL, or null for a blank layout. */
+export function newLayoutSource(params: URLSearchParams): string | null {
+  return params.get("from") || null;
 }

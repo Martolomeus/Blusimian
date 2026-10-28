@@ -24,18 +24,30 @@ import {
   type LayoutDraft,
 } from "@/lib/layouts/layoutDraft";
 import type { EntityLayout, UpdateLayoutRequest } from "@/lib/layouts/types";
-import { layoutPath, LAYOUTS_PATH } from "../paths";
+import { entitySettingsPath, SETTINGS_PATH } from "../../paths";
+import { layoutPath } from "../paths";
 import { sectionDndId } from "./dndIds";
 import { EditorSection } from "./EditorSection";
 import { FieldPalette } from "./FieldPalette";
 import { LayoutDndContext } from "./LayoutDndContext";
 import styles from "../layouts.module.css";
 
+type EditorMessageProps = {
+  /** The entity whose settings page the back link opens; none for an unknown entity. */
+  entityType?: EntityType;
+  error?: boolean;
+  children: ReactNode;
+};
+
 /** What the editor's pages show instead of it: loading, not found, an error. */
-export function EditorMessage({ error, children }: { error?: boolean; children: ReactNode }) {
+export function EditorMessage({ entityType, error, children }: EditorMessageProps) {
   return (
     <main className="page-content">
-      <Link to={LAYOUTS_PATH} className="page-back">← Entity layouts</Link>
+      {entityType ? (
+        <Link to={entitySettingsPath(entityType)} className="page-back">← {ENTITIES[entityType].singular} settings</Link>
+      ) : (
+        <Link to={SETTINGS_PATH} className="page-back">← Settings</Link>
+      )}
       <p className={error ? "page-error" : "page-empty"}>{children}</p>
     </main>
   );
@@ -103,7 +115,7 @@ export function LayoutEditor({ entityType, isDefault, fields, initial, isNew, sa
       const saved = await save(toRequest(draft));
       if (isNew) {
         leaving.current = true;
-        navigate(layoutPath(saved.id), { replace: true });
+        navigate(layoutPath(entityType, saved.id), { replace: true });
         return;
       }
       const next = fromLayout(saved, fields);
@@ -130,7 +142,7 @@ export function LayoutEditor({ entityType, isDefault, fields, initial, isNew, sa
 
   return (
     <main className="page-content">
-      <Link to={LAYOUTS_PATH} className="page-back">← Entity layouts</Link>
+      <Link to={entitySettingsPath(entityType)} className="page-back">← {config.singular} settings</Link>
 
       <div className={styles.editorHeader}>
         <config.icon className={styles.editorIcon} size={28} />
@@ -157,7 +169,7 @@ export function LayoutEditor({ entityType, isDefault, fields, initial, isNew, sa
           </p>
         </div>
         <div className={styles.editorActions}>
-          <Button variant="secondary" size="sm" onClick={() => navigate(LAYOUTS_PATH)}>
+          <Button variant="secondary" size="sm" onClick={() => navigate(entitySettingsPath(entityType))}>
             Cancel
           </Button>
           <Button

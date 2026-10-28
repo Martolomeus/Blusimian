@@ -3,6 +3,7 @@ package com.blusimian.blusimian.entityLayouts;
 import com.blusimian.blusimian.entityLayouts.dto.CreateEntityLayoutRequest;
 import com.blusimian.blusimian.entityLayouts.dto.EntityLayoutResponse;
 import com.blusimian.blusimian.entityLayouts.dto.UpdateEntityLayoutRequest;
+import com.blusimian.blusimian.entityModel.EntityType;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -24,7 +25,7 @@ import java.util.UUID;
  *
  * Record pages never call this: they get the one layout that applies to them from the
  * schema bundle (GET /api/entities/{entityType}/schema). There is no get-by-id either;
- * the list returns every layout as a full tree, and the editor reads its layout from it.
+ * the list returns an entity's layouts as full trees, and the editor reads its layout from it.
  * A malformed {id} fails UUID conversion and Spring returns 400; an unknown one is a 404
  * from the service.
  */
@@ -38,10 +39,10 @@ public class EntityLayoutController {
         this.service = service;
     }
 
-    // GET /api/entity-layouts -- every layout of every entity, full trees.
-    @GetMapping
-    public List<EntityLayoutResponse> list() {
-        return service.list();
+    // GET /api/entity-layouts/{entityType} -- every layout of that entity, full trees.
+    @GetMapping("/{entityType}")
+    public List<EntityLayoutResponse> list(@PathVariable EntityType entityType) {
+        return service.list(entityType);
     }
 
     // POST /api/entity-layouts -- a new, non-default layout.

@@ -14,14 +14,14 @@ import java.util.UUID;
  *   * findByEntityTypeAndIsDefaultTrue -- the layout the read path serves. The partial
  *     unique index uq_entity_layout_default allows at most one per entity type, so it
  *     returns an Optional rather than a list.
- *   * findAllByOrderByLabelAsc -- every layout of every entity, for the settings list.
+ *   * findAllByEntityTypeOrderByLabelAsc -- an entity's layouts, for its settings page.
  *   * countByEntityType -- for the per-entity layout limit on create.
  */
 public interface EntityLayoutRepository extends JpaRepository<EntityLayout, UUID> {
 
     Optional<EntityLayout> findByEntityTypeAndIsDefaultTrue(EntityType entityType);
 
-    List<EntityLayout> findAllByOrderByLabelAsc();
+    List<EntityLayout> findAllByEntityTypeOrderByLabelAsc(EntityType entityType);
 
     long countByEntityType(EntityType entityType);
 }

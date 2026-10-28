@@ -12,7 +12,7 @@ export type SettingsCardProps = {
   icon?: ComponentType<IconProps>;
 };
 
-// One section on the settings overview. A single link, so the card is one tab stop, the
+// One card in a settings overview section. A single link, so the card is one tab stop, the
 // whole surface is clickable, and middle-click opens a new tab. It knows nothing about
 // which settings exist.
 export function SettingsCard({ title, description, to, icon: Icon }: SettingsCardProps) {

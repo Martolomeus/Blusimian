@@ -1,19 +1,15 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import clsx from "clsx";
+import { SettingsSection } from "@/components/settings/SettingsSection";
 import { Button, ConfirmDialog } from "@/components/ui";
 import type { EntityConfig } from "@/lib/entity/entityConfig";
 import { CopyIcon, PlusIcon, StarIcon, StarOutlineIcon, TrashIcon } from "@/lib/icons";
-import { MAX_LAYOUTS_PER_ENTITY, useDeleteLayout, useSetDefaultLayout } from "@/lib/layouts/layouts";
+import { MAX_LAYOUTS_PER_ENTITY, useDeleteLayout, useLayoutList, useSetDefaultLayout } from "@/lib/layouts/layouts";
 import type { EntityLayout } from "@/lib/layouts/types";
+import { settingsSegment } from "../paths";
 import { layoutPath, newLayoutPath } from "./paths";
 import styles from "./layouts.module.css";
-
-type LayoutGroupProps = {
-  entity: EntityConfig;
-  /** This entity's layouts, in any order. */
-  layouts: EntityLayout[];
-};
 
 function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
@@ -24,21 +20,22 @@ function summary(layout: EntityLayout): string {
   return `${count(layout.sections.length, "section")} · ${count(fields, "field")}`;
 }
 
-// One entity's layouts on the settings list: default first, then by label, each row
-// opening the editor. New layout and Duplicate open the editor on a layout that isn't
+// The Layouts section of an entity's settings page: default first, then by label, each
+// row opening the editor. New layout and Duplicate open the editor on a layout that isn't
 // stored yet. Each mutation disables only its own control while it runs, and its error
-// shows under the group header until the next action.
-export function LayoutGroup({ entity, layouts }: LayoutGroupProps) {
+// shows at the top of the section until the next action.
+export function LayoutsSection({ entity }: { entity: EntityConfig }) {
   const navigate = useNavigate();
+  const { data: layouts, isLoading, error: loadError } = useLayoutList(entity.type);
   const setDefault = useSetDefaultLayout();
   const remove = useDeleteLayout();
   const [error, setError] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<EntityLayout | null>(null);
 
-  const rows = [...layouts].sort(
+  const rows = [...(layouts ?? [])].sort(
     (a, b) => Number(b.isDefault) - Number(a.isDefault) || a.label.localeCompare(b.label),
   );
-  const atLimit = layouts.length >= MAX_LAYOUTS_PER_ENTITY;
+  const atLimit = rows.length >= MAX_LAYOUTS_PER_ENTITY;
   const limitTitle = `A ${entity.singular.toLowerCase()} can have at most ${MAX_LAYOUTS_PER_ENTITY} layouts. Delete one to add another.`;
 
   function handleSetDefault(layout: EntityLayout) {
@@ -58,36 +55,44 @@ export function LayoutGroup({ entity, layouts }: LayoutGroupProps) {
   }
 
   return (
-    <section className={styles.group}>
-      <header className={styles.groupHeader}>
-        <entity.icon className={styles.groupIcon} size={20} />
-        <h2 className={styles.groupTitle}>{entity.plural}</h2>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => navigate(newLayoutPath({ entity: entity.type }))}
-          disabled={atLimit}
-          title={atLimit ? limitTitle : undefined}
-        >
-          <PlusIcon size={16} />
-          New layout
-        </Button>
-      </header>
+    <SettingsSection
+      storageKey={`${settingsSegment(entity.type)}/layouts`}
+      title="Layouts"
+      count={layouts?.length}
+      // Until layouts can be assigned to roles; then rows gain an "Assigned to" column.
+      description={`Only the default layout is shown on ${entity.singular.toLowerCase()} pages today. Other layouts are kept for when layouts can be assigned to roles.`}
+      actions={
+        layouts && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => navigate(newLayoutPath(entity.type))}
+            disabled={atLimit}
+            title={atLimit ? limitTitle : undefined}
+          >
+            <PlusIcon size={16} />
+            New layout
+          </Button>
+        )
+      }
+    >
+      {isLoading && <p className="page-empty">Loading…</p>}
+      {loadError && <p className="page-error">{loadError.message}</p>}
 
       {error && (
-        <div className={styles.errorBanner} role="alert">
+        <div className={clsx(styles.errorBanner, styles.listError)} role="alert">
           {error}
         </div>
       )}
 
-      {rows.length === 0 ? (
-        <p className={clsx("page-empty", styles.groupEmpty)}>No layouts yet.</p>
+      {!layouts ? null : rows.length === 0 ? (
+        <p className={clsx("page-empty", styles.empty)}>No layouts yet.</p>
       ) : (
         <ul className={styles.rows}>
           {rows.map((layout) => (
-            <li key={layout.id} className={styles.row} onClick={() => navigate(layoutPath(layout.id))}>
+            <li key={layout.id} className={styles.row} onClick={() => navigate(layoutPath(entity.type, layout.id))}>
               <Link
-                to={layoutPath(layout.id)}
+                to={layoutPath(entity.type, layout.id)}
                 className={clsx("record-name-link", styles.rowLabel)}
                 onClick={(e) => e.stopPropagation()}
               >
@@ -121,7 +126,7 @@ export function LayoutGroup({ entity, layouts }: LayoutGroupProps) {
                   size="sm"
                   aria-label={`Duplicate ${layout.label}`}
                   title={atLimit ? limitTitle : "Duplicate"}
-                  onClick={() => navigate(newLayoutPath({ from: layout.id }))}
+                  onClick={() => navigate(newLayoutPath(entity.type, layout.id))}
                   disabled={atLimit}
                 >
                   <CopyIcon size={18} />
@@ -159,6 +164,6 @@ export function LayoutGroup({ entity, layouts }: LayoutGroupProps) {
         onConfirm={handleDelete}
         onCancel={() => setToDelete(null)}
       />
-    </section>
+    </SettingsSection>
   );
 }

@@ -29,9 +29,10 @@ export const routes: RouteObject[] = [
       { path: "deals/:id", element: <EntityDetailPage entityType="DEAL" /> },
 
       { path: "settings", ...lazyPage(() => import("./features/settings/SettingsPage")) },
-      { path: "settings/layouts", ...lazyPage(() => import("./features/settings/layouts/LayoutSettingsPage")) },
-      { path: "settings/layouts/new", ...lazyPage(() => import("./features/settings/layouts/editor/NewLayoutPage")) },
-      { path: "settings/layouts/:id", ...lazyPage(() => import("./features/settings/layouts/editor/LayoutEditorPage")) },
+      { path: "settings/:entity", ...lazyPage(() => import("./features/settings/entity/EntitySettingsPage")) },
+      { path: "settings/:entity/layouts", element: <Navigate to=".." relative="path" replace /> },
+      { path: "settings/:entity/layouts/new", ...lazyPage(() => import("./features/settings/layouts/editor/NewLayoutPage")) },
+      { path: "settings/:entity/layouts/:id", ...lazyPage(() => import("./features/settings/layouts/editor/LayoutEditorPage")) },
 
       { path: "*", element: <NotFound /> },
     ],

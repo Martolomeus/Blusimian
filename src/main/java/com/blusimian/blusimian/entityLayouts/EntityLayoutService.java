@@ -65,10 +65,10 @@ public class EntityLayoutService {
                 .map(EntityLayoutResponse::from);
     }
 
-    /** Every layout of every entity, as full trees. At most a few dozen small ones. */
+    /** One entity's layouts, as full trees. At most MAX_LAYOUTS_PER_ENTITY small ones. */
     @Transactional(readOnly = true)
-    public List<EntityLayoutResponse> list() {
-        return repository.findAllByOrderByLabelAsc().stream()
+    public List<EntityLayoutResponse> list(EntityType entityType) {
+        return repository.findAllByEntityTypeOrderByLabelAsc(entityType).stream()
                 .map(EntityLayoutResponse::from)
                 .toList();
     }

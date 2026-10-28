@@ -27,7 +27,7 @@
 | D5 | Editor URLs nest under the entity: `/settings/contacts/layouts/:id`, `/settings/contacts/layouts/new[?from=<id>]`. `?entity=` is gone; the path says it. The editor UI doesn't change; its back link, Cancel and post-create move point at the entity page. | §8 |
 | D6 | A layout is found only under its own entity's URL. Any other entity's URL shows "doesn't exist". | §8.2 |
 | D7 | Collapsed state is per viewer, per section, in `localStorage`. Every section starts expanded, and if storage isn't available they all just stay expanded. | §4.3 |
-| D8 | No backend change. The single `/api/entity-layouts` list stays; each entity page filters it, as `LayoutSettingsPage` does today. | — |
+| D8 | The layout list is per entity: `GET /api/entity-layouts/{entityType}` replaces the list of every layout, which only the removed page needed. Each page reads only its entity's layouts. | §7, §8.2 |
 | D9 | The overview has two sections: **CRM** (Contact, Company) and **Sales** (Deal). | §5 |
 | D10 | Card and page titles come from `ENTITIES`, so the entity is *Company* everywhere (*Company settings*). | §5 |
 
@@ -82,7 +82,8 @@ an entity's plural.
 
 **Removed:** `/settings/layouts`, `/settings/layouts/:id` and `/settings/layouts/new`. There
 are no redirects: this is the dev phase and nobody has bookmarks. `/settings/layouts` now
-matches `/settings/:entity` and shows the unknown-entity message (§6.3).
+matches `/settings/:entity` and shows the unknown-entity message (§6.3);
+`/settings/layouts/:id` and `/settings/layouts/new` fall through to the app's `NotFound`.
 
 ### Back links
 
@@ -180,7 +181,7 @@ page looks like the current layouts page:
 | `.toggle` | button reset; `display: flex`, `width: 100%`, `align-items: center`, `gap: var(--space-3)`; `font-size: var(--font-size-lg)`, `font-weight: var(--font-weight-semibold)`, `color: var(--color-text)`; `cursor: pointer`; `:focus-visible` outline as `SettingsCard` (`2px solid var(--color-sidebar-active)`, offset 2px) |
 | `.chevron` | muted; `transition: transform var(--transition-fast)`; `[aria-expanded="true"] .chevron { transform: rotate(90deg) }`; no transition under `prefers-reduced-motion: reduce`; turns `--color-text` on toggle hover |
 | `.count` | muted pill, the look of `layouts.module.css` `.badge` |
-| `.body` | `padding-top: var(--space-8)` |
+| `.body` | `padding-top: var(--space-8)`; never a `display`, which would override `hidden` |
 | `.description` | as `.page-intro`: muted, `max-width: 720px`, `margin-bottom: var(--space-8)` |
 
 There's no height animation: `hidden` can't animate, and the expand is instant (§13). A
@@ -260,7 +261,7 @@ every entity.
 ```
 EntitySettingsPage            reads :entity → EntityConfig, or the unknown-entity message
   ├─ ← Settings
-  ├─ header                   entity icon (28px, as the editor header) + "Contact settings"; intro
+  ├─ header                   "Contact settings"; intro (no entity icon for now, §13)
   └─ sections, in order
        └─ LayoutsSection (entity)            §7
 ```
@@ -291,7 +292,7 @@ the same message under an unknown `:entity`.
 
 ```
 ← Settings
-[contact icon] Contact settings
+Contact settings
 Configure how contacts work for your organisation.
 
 ▾ Layouts (3)                                                          [+ New layout]
@@ -319,8 +320,7 @@ pending state, the error banner, and `ConfirmDialog`.
 
 ```tsx
 export function LayoutsSection({ entity }: { entity: EntityConfig }) {
-  const { data: all, isLoading, error } = useLayoutList();
-  const layouts = all?.filter((layout) => layout.entityType === entity.type);
+  const { data: layouts, isLoading, error } = useLayoutList(entity.type);
   // … today's LayoutGroup state and handlers, unchanged …
   return (
     <SettingsSection
@@ -342,8 +342,8 @@ What changes compared with `LayoutGroup`:
 
 | Was | Becomes |
 |---|---|
-| `<section className={styles.group}>` with its own header (entity icon, plural, New layout) | `SettingsSection` titled "Layouts"; the icon moves to the page header; New layout becomes `actions` |
-| received `layouts` from the page | reads `useLayoutList()` and filters it itself |
+| `<section className={styles.group}>` with its own header (entity icon, plural, New layout) | `SettingsSection` titled "Layouts"; the entity icon is dropped (§13); New layout becomes `actions` |
+| received `layouts` from the page | reads its entity's list, `useLayoutList(entity.type)` |
 | page intro about default-only | the section's `description`, naming the entity |
 | `navigate(newLayoutPath({ entity }))`, `newLayoutPath({ from })`, `layoutPath(id)` | `newLayoutPath(entity.type)`, `newLayoutPath(entity.type, layout.id)`, `layoutPath(entity.type, id)` (§9) |
 | — | New layout appears once the list has loaded, as it does today (the group wasn't rendered before that) |
@@ -355,8 +355,8 @@ What changes compared with `LayoutGroup`:
 
 **CSS.** In `layouts.module.css`, delete `.group`, `.groupHeader`, `.groupIcon`,
 `.groupTitle` and `.groupHeader + .errorBanner`; `SettingsSection` owns the header now.
-Give `.errorBanner` a bottom margin inside the section (`margin-bottom: var(--space-4)`).
-The `.row*` classes stay.
+The list's banner gets `.listError` (`margin-bottom: var(--space-4)`), as the editor's gets
+`.editorError`. `.groupEmpty` becomes `.empty`. The `.row*` classes stay.
 
 ---
 
@@ -387,10 +387,14 @@ now that's the entity page.
 Both pages first resolve `:entity` with `entityFromSettingsSegment`. If it matches
 nothing, they show the unknown-entity message (§6.3).
 
-**`LayoutEditorPage`** (`/settings/:entity/layouts/:id`): finds the layout with
-`l.id === id && l.entityType === entity.type`. A layout of another entity is
-"This layout doesn't exist (it may have been deleted)." (D6). That URL is only ever
-typed by hand, and one rule is simpler than a redirect.
+**`LayoutEditorPage`** (`/settings/:entity/layouts/:id`): finds the layout by id in its
+entity's list. A layout of another entity isn't in it, so it's "This layout doesn't
+exist (it may have been deleted)." (D6). That URL is only ever typed by hand, and one
+rule is simpler than a redirect.
+
+Both pages resolve `:entity` first and then render an inner component that reads
+`useLayoutList(entity.type)`, so the hook always has an entity. A blank new layout
+doesn't read the list at all.
 
 **`NewLayoutPage`** (`/settings/:entity/layouts/new`):
 
@@ -481,12 +485,14 @@ chunk.
 | `features/settings/layouts/paths.ts` | rewritten — §9 |
 | `features/settings/layouts/editor/LayoutEditor.tsx` | back link, Cancel, post-create move; `EditorMessage` takes `entityType` — §8.1 |
 | `features/settings/layouts/editor/LayoutEditorPage.tsx`, `NewLayoutPage.tsx` | entity from the path — §8.2 |
+| `lib/layouts/layouts.ts` | `useLayoutList(entityType)`, one cache entry per entity; writes update their entity's list — D8 |
 | `features/settings/layouts/layouts.module.css` | group header classes removed — §7 |
 | `router.tsx` | §10 |
 | `features/settings/layouts/LayoutSettingsPage.tsx` | **deleted** |
 | `features/settings/layouts/LayoutGroup.tsx` | **deleted** (became `LayoutsSection.tsx`) |
-| `components/settings/SettingsCard.tsx`, `Sidebar.tsx`, `globals.css`, `lib/layouts/*` | unchanged |
-| backend | unchanged |
+| `components/settings/SettingsCard.tsx` | comment only: a card in a section, not a section |
+| `Sidebar.tsx`, `globals.css`, the rest of `lib/layouts` | unchanged |
+| backend `EntityLayoutController`, `EntityLayoutService`, `EntityLayoutRepository` | `GET /api/entity-layouts/{entityType}` replaces `GET /api/entity-layouts`; `list(EntityType)`, `findAllByEntityTypeOrderByLabelAsc` — D8 |
 
 ---
 
@@ -512,7 +518,7 @@ chunk.
 | Collapsed state on the server or shared between pages | it's a per-viewer convenience; there are no users yet |
 | A section registry on the entity page | one section today; a list of components is clearer than config |
 | A page per entity (`ContactSettingsPage`, …) | they'd be identical; `ENTITIES` already says everything that differs |
-| A per-entity layouts endpoint | the list is at most 60 small trees and is already cached; the filter is one line |
+| The entity icon in the entity page header | later; it needs its own header styles (`.page-header` spreads its children apart, and the editor's header is sized for its title input) |
 | Settings search, a settings side-nav | still few pages; revisit when the overview has several sections |
 
 ---
@@ -572,7 +578,8 @@ chunk.
 5. `SettingsPage` sections (§5).
 6. `npm run build` (type check), `npm test`, then the browser checklist (§14).
 7. Docs: fold this into `Architecture/settings.md`. That means §2 (IA), §3 (shell: add
-   `SettingsSection`, and drop "no nested navigation" from §3.2), §5 (the Entity layouts
+   `SettingsSection`, and drop "no nested navigation" from §3.2), §4 (`useLayoutList(entityType)`,
+   one cache entry per entity), §5 (the Entity layouts
    page becomes *Entity settings page → Layouts section*), §6.1 and §6.6 (routes, back
    link, post-create move), §7 (files) and §9 (verified by hand). Also add "give it a
    settings card in a `SECTIONS` section" to the new-entity recipe in

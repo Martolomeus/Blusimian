@@ -119,7 +119,7 @@ The default can't be deleted (§5.6), so every entity keeps one.
 | File | Role |
 |---|---|
 | `EntityLayout`, `EntityLayoutSection`, `EntityLayoutSectionField` | JPA entities for the three tables. `@OneToMany(cascade ALL, orphanRemoval) @OrderBy("sortOrder")`, so children arrive in display order. `EntityLayout.create`, `rename`, `replaceSections`, `markDefault`, `clearDefault`; sections and placements have package-private constructors, used only by the service. |
-| `EntityLayoutRepository` | `findByEntityTypeAndIsDefaultTrue(EntityType) → Optional`, `findAllByOrderByLabelAsc()`, `countByEntityType(EntityType)`. |
+| `EntityLayoutRepository` | `findByEntityTypeAndIsDefaultTrue(EntityType) → Optional`, `findAllByEntityTypeOrderByLabelAsc(EntityType)`, `countByEntityType(EntityType)`. |
 | `EntityLayoutValidator` | plain class: `validate(label, sections, dictionary) → List<FieldError>`, the write rules of §5.6. |
 | `EntityLayoutService` | `resolve(EntityType)` → the layout that applies to the caller, as a DTO, or empty (the read path). `list`, `create`, `replace`, `setDefault`, `delete` (the write path). |
 | `EntityLayoutController` | the endpoints under `/api/entity-layouts` (§5.1). |
@@ -177,7 +177,7 @@ companies, contacts, deals ──► entityModel platform
 |---|---|---|---|
 | GET | `/api/entities/{entityType}/schema` | 200 bundle + `ETag` + `Cache-Control: no-cache, private` | 400 unknown entity type |
 | GET | same, with a matching `If-None-Match` | 304, no body | — |
-| GET | `/api/entity-layouts` | 200 every layout of every entity, full trees with row ids | — |
+| GET | `/api/entity-layouts/{entityType}` | 200 every layout of that entity, full trees with row ids | 400 unknown entity type |
 | POST | `/api/entity-layouts` | 201 the created layout | 400 `VALIDATION_ERROR`; 409 layout limit |
 | PUT | `/api/entity-layouts/{id}` | 200 the replaced layout | 400 `VALIDATION_ERROR`; 404 |
 | PUT | `/api/entity-layouts/{id}/default` | 204 (idempotent) | 404 |
@@ -186,9 +186,8 @@ companies, contacts, deals ──► entityModel platform
 `entityType` is case-insensitive (`company` = `COMPANY`). A malformed `{id}` is a 400.
 
 Record pages only call the schema endpoint. The `/api/entity-layouts` endpoints are the
-admin side, used by the layout editor (`settings.md`). There is no get-by-id and no
-per-entity read: the list is at most 60 small trees, and the editor reads its layout
-from it.
+admin side, used by the layout editor (`settings.md`). There is no get-by-id: the list
+of an entity's layouts is at most 20 small trees, and the editor reads its layout from it.
 
 Records are served by each entity's own endpoint (`/api/companies`, `/api/contacts`,
 `/api/deals`) as a flat map: `id`, one value per field key, `createdAt`, `updatedAt`.
@@ -331,7 +330,7 @@ make a 21st; that is harmless.
 - `EntitySchemaService.getSchema` runs in its own read-only transaction: the fields from
   `EntityFieldDictionary` (built-in from `StandardFieldRegistry`, then active custom
   fields from `CustomFieldDescriptors`), the layout from `EntityLayoutService.resolve`.
-- `EntityLayoutService.list` maps every layout tree to DTOs inside its transaction too.
+- `EntityLayoutService.list` maps the entity's layout trees to DTOs inside its transaction too.
 - Both field kinds go through the same `FieldDescriptor → SchemaFieldResponse` mapping,
   so the dictionary is uniform by construction.
 

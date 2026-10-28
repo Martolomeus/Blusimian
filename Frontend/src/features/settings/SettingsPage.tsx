@@ -1,15 +1,26 @@
 import { SettingsCard, type SettingsCardProps } from "@/components/settings/SettingsCard";
-import { LayoutIcon } from "@/lib/icons";
+import { SettingsSection } from "@/components/settings/SettingsSection";
+import { ENTITIES } from "@/lib/entity/entityConfig";
+import type { EntityType } from "@/lib/entity/types";
+import { entitySettingsPath } from "./paths";
 
-// In overview order. A section is listed once its page exists; adding one is an entry
-// here plus its routes in router.tsx.
-const SECTIONS: SettingsCardProps[] = [
-  {
-    title: "Entity layouts",
-    description: "Arrange the sections and fields shown on contact, company and deal pages.",
-    to: "/settings/layouts",
-    icon: LayoutIcon,
-  },
+type OverviewSection = { key: string; title: string; description?: string; cards: SettingsCardProps[] };
+
+function entitySettingsCard(type: EntityType): SettingsCardProps {
+  const entity = ENTITIES[type];
+  return {
+    title: `${entity.singular} settings`,
+    description: `Layouts for ${entity.singular.toLowerCase()} records.`,
+    to: entitySettingsPath(type),
+    icon: entity.icon,
+  };
+}
+
+// In overview order; an entity's card in the section it belongs to, in sidebar order
+// within it. A section is listed once it has a card.
+const SECTIONS: OverviewSection[] = [
+  { key: "crm", title: "CRM", cards: [entitySettingsCard("CONTACT"), entitySettingsCard("COMPANY")] },
+  { key: "sales", title: "Sales", cards: [entitySettingsCard("DEAL")] },
 ];
 
 export default function SettingsPage() {
@@ -22,11 +33,15 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="settings-grid">
-        {SECTIONS.map((section) => (
-          <SettingsCard key={section.to} {...section} />
-        ))}
-      </div>
+      {SECTIONS.map(({ key, title, description, cards }) => (
+        <SettingsSection key={key} storageKey={`overview/${key}`} title={title} description={description}>
+          <div className="settings-grid">
+            {cards.map((card) => (
+              <SettingsCard key={card.to} {...card} />
+            ))}
+          </div>
+        </SettingsSection>
+      ))}
     </main>
   );
 }
