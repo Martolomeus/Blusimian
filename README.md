@@ -5,9 +5,10 @@ A small CRM, built as a monorepo with the backend at the repository root:
 - **`src/`, `pom.xml`** — Spring Boot 4 (Java 25) REST API built with Maven, Postgres + Flyway, JPA/Hibernate.
 - **`Frontend/`** — Vite + React 19 SPA (React Router, React Query, react-hook-form + zod).
 
-The schema is split into a `public` schema (global reference data, e.g. `iso_countries`)
-and an `app` schema (tenant-scoped data: contacts, companies) to pre-draw the boundary
-for a future tenant-isolation (RLS) layer. There is no auth or multitenancy yet.
+The app is multi-tenant. The schema is split into a `public` schema (global reference
+data, e.g. `iso_countries`) and an `app` schema (tenant data), where Postgres row-level
+security isolates tenants on every table. Login is a minimal username + password with an
+HTTP session. See `Architecture/multitenancy.md`.
 
 ## Prerequisites
 
@@ -17,9 +18,14 @@ for a future tenant-isolation (RLS) layer. There is no auth or multitenancy yet.
 
 ## Database
 
-Postgres runs in a Docker container named `blusimian-db` (port `5434`, db/user
-`blusimian`/`postgres`). Flyway applies `src/main/resources/db/migration` on
-backend startup.
+Postgres runs in a Docker container named `blusimian-db` (port `5434`, db `blusimian`),
+started with `docker compose up -d`. On an empty volume, `docker/initdb` creates two
+roles: `blusimian_owner`, which Flyway uses to apply `src/main/resources/db/migration` on
+backend startup, and `blusimian_app`, which the app uses and RLS applies to. A volume
+created before those roles existed needs one `docker compose down -v`.
+
+In dev, the backend provisions two demo tenants on startup: Acme (log in as `alice`) and
+Globex (`bob`); each password is the username.
 
 ## Common tasks (`make`)
 
@@ -41,11 +47,12 @@ src/       Spring Boot API (src/main/java/com/blusimian/blusimian/...)
 pom.xml    Maven build (./mvnw)
 scripts/   code/SQL generators for the backend
 Frontend/  Vite + React SPA (src/features, src/components, src/lib)
+docker/    Postgres init scripts (the database roles)
 Makefile   dev orchestration
 ```
 
 ## Notes
 
-- `src/main/resources/application.properties` holds a **local-only** dev DB
-  password. Keep real/production secrets out of the repo — use environment variables
-  when deploying.
+- `src/main/resources/application.properties` and `docker/initdb` hold **local-only**
+  dev DB passwords, as do the demo logins. Keep real/production secrets out of the repo —
+  use environment variables when deploying.

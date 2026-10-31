@@ -8,8 +8,10 @@
 #   docker compose down      stop and remove the container (data is KEPT)
 #   docker compose down -v    stop and ALSO wipe the data volume (full reset)
 #
-# Connection details match src/main/resources/application.properties:
-#   host localhost, port 5434, db/user/password = blusimian/postgres/blusimian
+# Connection details match src/main/resources/application.properties: host
+# localhost, port 5434, db blusimian. docker/initdb creates the roles on an empty
+# volume: blusimian_owner (Flyway) and blusimian_app (the app; RLS applies).
+# postgres/blusimian is the superuser, for `make db-shell` only.
 
 # Fixed project name, so the volume name doesn't depend on the folder name.
 name: blusimian
@@ -26,6 +28,8 @@ services:
       - "5434:5432"                        # host 5434 -> container 5432
     volumes:
       - blusimian-db-data:/var/lib/postgresql/data
+      # Runs once, on an empty volume. Volumes created before it need `down -v`.
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
     # Lets `docker compose up --wait` (and dependents) block until Postgres is
     # actually accepting connections, not just until the container starts.
     healthcheck:

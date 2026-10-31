@@ -39,7 +39,7 @@ import java.util.Map;
  * keyspace).
  *
  * The bundle is self-consistent: every placement's key exists in `fields`, spelled as it
- * is there. A placement is a citext key with no foreign key, so it can outlive its field
+ * is there. A placement is a case-insensitive key with no foreign key, so it can outlive its field
  * (an archived custom field) or differ from it in case; both are settled here, once,
  * instead of in every client.
  */

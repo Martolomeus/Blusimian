@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { createPortal } from "react-dom";
+import { useLogout, type CurrentUser } from "@/features/auth/auth";
 import { ENTITIES } from "@/lib/entity/entityConfig";
-import { SettingsIcon } from "@/lib/icons";
+import { LogoutIcon, PersonIcon, SettingsIcon } from "@/lib/icons";
 
 const navItems = Object.values(ENTITIES).map((entity) => ({
   href: entity.path,
@@ -10,8 +11,10 @@ const navItems = Object.values(ENTITIES).map((entity) => ({
   Icon: entity.icon,
 }));
 
-export default function Sidebar() {
+export default function Sidebar({ user }: { user: CurrentUser }) {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const logout = useLogout();
   const [hovered, setHovered] = useState(false);
   const [mounted, setMounted] = useState(false);
 
@@ -64,6 +67,22 @@ export default function Sidebar() {
               <SettingsIcon className="nav-icon" size={20} />
               <span className="nav-label">Settings</span>
             </Link>
+            <div className="sidebar-user" title={`${user.displayName} (${user.username}), ${user.tenant.name}`}>
+              <PersonIcon className="nav-icon" size={20} />
+              <span className="nav-label sidebar-user-label">
+                <span>{user.displayName}</span>
+                <span className="sidebar-user-tenant">{user.tenant.name}</span>
+              </span>
+            </div>
+            <button
+              type="button"
+              className="sidebar-nav-link"
+              disabled={logout.isPending}
+              onClick={() => logout.mutate(undefined, { onSuccess: () => navigate("/login", { replace: true }) })}
+            >
+              <LogoutIcon className="nav-icon" size={20} />
+              <span className="nav-label">Log out</span>
+            </button>
           </div>
         </div>
       </aside>

@@ -1,7 +1,7 @@
 # Entity Layouts & Entity Schema — Architecture Reference
 
-**Status:** Read path, schema bundle and layout write path implemented & verified; role assignment not built · **Scope:** `COMPANY`, `CONTACT`, `DEAL`, single-tenant
-**Last updated:** 2026-10-25 · **Packages:** `com.blusimian.blusimian.entityLayouts`, `com.blusimian.blusimian.entitySchema`, `com.blusimian.blusimian.entityModel`
+**Status:** Read path, schema bundle and layout write path implemented & verified; role assignment not built · **Scope:** `COMPANY`, `CONTACT`, `DEAL`, per tenant (RLS, `Architecture/multitenancy.md`)
+**Last updated:** 2026-10-28 · **Packages:** `com.blusimian.blusimian.entityLayouts`, `com.blusimian.blusimian.entitySchema`, `com.blusimian.blusimian.entityModel`
 
 This is the as-built reference for entity layouts, the entity-schema endpoint, and the
 record machinery they share with every entity. The frontend that consumes the schema is
@@ -38,25 +38,29 @@ in place, database wiped with `make db-reset`). The tree is held by real foreign
 with `ON DELETE CASCADE`. There is no archive lifecycle: a layout row is structure, not
 data, so a hard delete is safe.
 
+Every table also has a `tenant_id` under RLS, a primary key `(tenant_id, id)`, and
+composite foreign keys `(tenant_id, …)` (`multitenancy.md` §5). The tables below show
+their own columns only.
+
 ### `app.entity_layouts`
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | uuid PK | `gen_random_uuid()` |
+| `id` | uuid | `gen_random_uuid()` |
 | `entity_type` | varchar(50) | CHECK `in ('COMPANY','CONTACT','DEAL')`; enum `EntityType` |
 | `label` | varchar(255) | display name; served in the schema bundle |
 | `is_default` | boolean | the layout served when no assignment applies (today: always) |
 | `created_at` / `updated_at` | timestamptz | |
 
-Partial unique index `uq_entity_layout_default on (entity_type) where is_default`: at most
-one default per entity type. An entity type may have many layout rows.
+Partial unique index `uq_entity_layout_default on (tenant_id, entity_type) where is_default`:
+at most one default per tenant and entity type. An entity type may have many layout rows.
 
 ### `app.entity_layout_sections`
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | uuid PK | |
-| `layout_id` | uuid | FK → `entity_layouts(id)` ON DELETE CASCADE |
+| `id` | uuid | |
+| `layout_id` | uuid | FK `(tenant_id, layout_id)` → `entity_layouts` ON DELETE CASCADE |
 | `label` | varchar(255) | section title |
 | `column_count` | int | CHECK `between 1 and 2` |
 | `sort_order` | int | |
@@ -66,13 +70,13 @@ one default per entity type. An entity type may have many layout rows.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | uuid PK | |
-| `section_id` | uuid | FK → `entity_layout_sections(id)` ON DELETE CASCADE |
-| `field_key` | `public.citext` | the field's key in the record JSON (`legalName`, `lead_source`); max 100 |
+| `id` | uuid | |
+| `section_id` | uuid | FK `(tenant_id, section_id)` → `entity_layout_sections` ON DELETE CASCADE |
+| `field_key` | varchar(100), collation `app.case_insensitive` | the field's key in the record JSON (`legalName`, `lead_source`); case-insensitive |
 | `sort_order` | int | |
 | `created_at` / `updated_at` | timestamptz | |
 
-- `unique (section_id, field_key)`: a field is placed at most once per section. "Once per
+- `unique (tenant_id, section_id, field_key)`: a field is placed at most once per section. "Once per
   layout" is the write path's validator's job (§5.6).
 - **No foreign key to the field.** A placement names its field by key alone. Built-in
   fields are columns, not rows, so they cannot be foreign-keyed; a string key keeps every
@@ -81,19 +85,25 @@ one default per entity type. An entity type may have many layout rows.
 - Placements store no label and no data type. Those are read live from the field's own
   definition, so renaming a field cannot leave a stale copy here.
 
-### Seed
+### Default layouts
 
-One default layout per entity type, with fixed UUIDs. Every required field is placed.
-The default can't be deleted (§5.6), so every entity keeps one.
+Provisioning gives every new tenant one default layout per entity type:
+`DefaultLayoutsInitializer` stores each of `DefaultLayoutTemplates` through
+`EntityLayoutService.createDefault`, which validates it like the editor does, so a template
+naming a missing field fails provisioning. Every required field is placed. The default
+can't be deleted (§5.6), so every entity keeps one.
 
 | Entity | Section (columns) | Fields |
 |---|---|---|
-| `COMPANY` | Overview (2) | `name`, `legalName`, `type`, `industry`, `employeeRange`, `lead_source` (custom) |
+| `COMPANY` | Overview (2) | `name`, `legalName`, `type`, `industry`, `employeeRange` |
 | | Contact details (2) | `website`, `phone`, `phoneAlt`, `vatNumber` |
 | | About (1) | `description` |
 | `CONTACT` | Contact (2) | `salutation`, `firstName`, `lastName`, `email`, `phone` |
 | | Address (2) | `street`, `city`, `state`, `postalCode`, `countryCode` |
 | `DEAL` | Deal (2) | `dealName`, `amount`, `customerId` |
+
+A new tenant has no custom fields. The dev demo tenant Acme gets a `lead_source` field,
+appended to its company Overview (`DemoTenantSeeder`).
 
 ---
 
@@ -121,7 +131,8 @@ The default can't be deleted (§5.6), so every entity keeps one.
 | `EntityLayout`, `EntityLayoutSection`, `EntityLayoutSectionField` | JPA entities for the three tables. `@OneToMany(cascade ALL, orphanRemoval) @OrderBy("sortOrder")`, so children arrive in display order. `EntityLayout.create`, `rename`, `replaceSections`, `markDefault`, `clearDefault`; sections and placements have package-private constructors, used only by the service. |
 | `EntityLayoutRepository` | `findByEntityTypeAndIsDefaultTrue(EntityType) → Optional`, `findAllByEntityTypeOrderByLabelAsc(EntityType)`, `countByEntityType(EntityType)`. |
 | `EntityLayoutValidator` | plain class: `validate(label, sections, dictionary) → List<FieldError>`, the write rules of §5.6. |
-| `EntityLayoutService` | `resolve(EntityType)` → the layout that applies to the caller, as a DTO, or empty (the read path). `list`, `create`, `replace`, `setDefault`, `delete` (the write path). |
+| `EntityLayoutService` | `resolve(EntityType)` → the layout that applies to the caller, as a DTO, or empty (the read path). `list`, `create`, `replace`, `setDefault`, `delete` (the write path). `createDefault` for provisioning. |
+| `DefaultLayoutTemplates`, `DefaultLayoutsInitializer` | the default layouts, and the `TenantInitializer` that stores them for each new tenant. |
 | `EntityLayoutController` | the endpoints under `/api/entity-layouts` (§5.1). |
 | `dto/EntityLayoutResponse` and section / field DTOs | the nested tree **with** row ids. |
 | `dto/CreateEntityLayoutRequest`, `UpdateEntityLayoutRequest`, `EntityLayoutSectionRequest` | write bodies (§5.6). |
@@ -205,7 +216,7 @@ GET /api/entities/company/schema
     { "key": "lead_source", "label": "Lead Source", "dataType": "TEXT", "required": false, "maxLength": 255,  "referenceTo": null }
   ],
   "layout": {                              // the one layout resolved for the caller, or null
-    "id": "a0000000-0000-0000-0000-000000000001",
+    "id": "5c8e1f04-2b7a-4d39-9f61-0e3a7c2d4b18",
     "label": "Default",
     "sections": [
       { "label": "Overview", "columnCount": 2, "sortOrder": 10,
@@ -232,8 +243,8 @@ in `fields`, spelled exactly as it is there:
 - a placement key that differs from the field's key only in case is rewritten to the
   dictionary's spelling.
 
-This is settled once on the server because placements are `citext` keys with no foreign
-key. A client can join placements to fields without checking.
+This is settled once on the server because placements are case-insensitive keys with no
+foreign key. A client can join placements to fields without checking.
 
 ### 5.4 Which layout is served
 
@@ -253,7 +264,7 @@ keeps returning exactly one layout, so its contract and every client stay unchan
 - **`Cache-Control: no-cache, private`:** a browser may store the bundle but must
   revalidate before each use, which it does itself with `If-None-Match`. Clients get
   304s without any conditional-request code. `private` keeps shared caches out: the
-  bundle varies by caller once roles or tenants exist, and a shared cache keys on the
+  bundle varies by caller (by tenant now, by role later), and a shared cache keys on the
   URL alone.
 
 ### 5.6 Writing layouts
@@ -274,7 +285,7 @@ keeps returning exactly one layout, so its contract and every client stay unchan
 ```
 
 - **Whole tree.** A section's `fields` is its field keys in display order; the server
-  assigns `sort_order` as `(index + 1) * 10`, as in the seed. Requests carry no ids and no
+  assigns `sort_order` as `(index + 1) * 10`. Requests carry no ids and no
   sort orders. Labels are stored stripped of surrounding whitespace, and keys in the
   dictionary's spelling.
 - **`isDefault` is in neither body.** A new layout is never the default; the default
@@ -314,7 +325,7 @@ the second, and `GlobalExceptionHandler` turns that into a 409.
 
 **Delete** is a hard delete; the cascade removes sections and placements. The default
 layout can't be deleted (409 "The default layout can't be deleted"), so every entity
-keeps the default the seed gave it.
+keeps the default provisioning gave it.
 
 **Limit.** Create counts the entity's layouts and refuses the 21st with 409 "A company
 can have at most 20 layouts". The count takes no lock, so two concurrent creates can
@@ -372,10 +383,8 @@ and back (the flush-order trap of §5.6).
 - Role assignment: an assignment store and the role argument to `resolve` (§5.4). Until
   then only the default layout is served; other layouts can be built and kept.
 - Permissions: every `/api/entity-layouts` endpoint is an admin function and should
-  require the admin role once auth exists. The schema bundle stays open to every
-  signed-in user.
-- Multitenancy: `tenant_id` on `entity_layouts`, and the default index widened to
-  `(tenant_id, entity_type)`.
+  require the admin role once roles exist (today any logged-in user of the tenant may
+  call it). The schema bundle stays open to every signed-in user.
 
 **Known limitations:**
 
@@ -400,7 +409,7 @@ and back (the flush-order trap of §5.6).
 ## 10. Extension points
 
 - **New entity type:** add it to `EntityType` and to the `entity_type` CHECKs; implement
-  `RecordEntity` and a `StandardFieldProvider`; seed a default layout. No change inside
+  `RecordEntity` and a `StandardFieldProvider`; add its default to `DefaultLayoutTemplates`. No change inside
   `entityLayouts` or `entitySchema`. For the frontend side see
   `frontend-entity-pages.md` §8.
 - **New built-in field:** one `FieldDescriptor` in the entity's provider, and a placement

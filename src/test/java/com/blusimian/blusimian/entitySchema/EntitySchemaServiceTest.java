@@ -124,7 +124,7 @@ class EntitySchemaServiceTest {
 
     @Test
     void aPlacementKeyIsSpelledAsInTheDictionary() {
-        // field_key is citext, so a placement may differ from the field's key in case
+        // field_key is case-insensitive, so a placement may differ from the field's key in case
         givenLayoutPlacing("legalname", "LEAD_SOURCE");
 
         assertThat(placedKeys(service.getSchema(EntityType.COMPANY))).containsExactly("legalName", "lead_source");

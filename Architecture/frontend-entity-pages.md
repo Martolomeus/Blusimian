@@ -135,9 +135,9 @@ Query keys across the app:
 Layout writes in the settings area invalidate `["entity-schema", type]`, so a record page
 picks up an edited or newly chosen default layout on its next fetch.
 
-**When sign-in exists:** the bundle's layout is resolved by the server for the current
-user, so the query cache must be cleared on sign-in and sign-out. Nothing else in the
-frontend changes for roles.
+**Login and logout clear the query cache** (`features/auth/auth.ts`): the bundle is
+resolved by the server for the current user and tenant, and the cache is keyed by query,
+not by user. Nothing else in the frontend changes for roles.
 
 ---
 

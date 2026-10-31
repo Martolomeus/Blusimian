@@ -13,5 +13,7 @@ public enum ErrorCode {
     VALIDATION_ERROR,     // malformed/invalid request input (bean validation, type mismatch)
     CUSTOM_FIELD_INVALID, // custom_fields payload fails its definitions
     NOT_FOUND,
-    CONFLICT
+    CONFLICT,
+    UNAUTHENTICATED,      // no session: log in first
+    INVALID_CREDENTIALS   // login failed: unknown user, wrong password and disabled user alike
 }

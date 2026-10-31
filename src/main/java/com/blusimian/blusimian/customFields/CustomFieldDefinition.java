@@ -41,11 +41,9 @@ public class CustomFieldDefinition {
     @Column(name = "entity_type", nullable = false)
     private EntityType entityType;
 
-    // field_key is a Postgres citext (case-insensitive). Mapped as a plain String
-    // exactly like contacts.email; columnDefinition tells Hibernate the real DB
-    // type so ddl-auto=validate doesn't reject it as a varchar mismatch.
+    // Compared case-insensitively in SQL through the column's collation.
     // updatable = false enforces the "write-once" rule at the persistence layer.
-    @Column(name = "field_key", columnDefinition = "citext", nullable = false, updatable = false)
+    @Column(name = "field_key", nullable = false, updatable = false)
     private String fieldKey;
 
     @Column(nullable = false)

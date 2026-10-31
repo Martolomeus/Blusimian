@@ -74,7 +74,7 @@ public class EntityLayoutService {
     }
 
     /**
-     * A new, non-default layout. Every entity already has a default from the seed, and
+     * A new, non-default layout. Every entity already has a default from provisioning, and
      * delete keeps it, so a new layout never has to become one. The limit is checked by
      * count without a lock: two concurrent creates can make one layout too many, which
      * is harmless.
@@ -85,10 +85,17 @@ public class EntityLayoutService {
         if (repository.countByEntityType(entityType) >= MAX_LAYOUTS_PER_ENTITY) {
             throw new LayoutLimitReachedException(entityType, MAX_LAYOUTS_PER_ENTITY);
         }
-        Map<String, String> keys = validate(entityType, request.label(), request.sections());
+        return EntityLayoutResponse.from(repository.saveAndFlush(newLayout(request)));
+    }
 
-        EntityLayout layout = EntityLayout.create(entityType, request.label().strip());
-        layout.replaceSections(toSections(layout, request.sections(), keys));
+    /**
+     * A new layout that is its entity's default, through the same validation as create.
+     * For provisioning (DefaultLayoutsInitializer), while the entity has no default yet.
+     */
+    @Transactional
+    public EntityLayoutResponse createDefault(CreateEntityLayoutRequest request) {
+        EntityLayout layout = newLayout(request);
+        layout.markDefault();
         return EntityLayoutResponse.from(repository.saveAndFlush(layout));
     }
 
@@ -141,6 +148,13 @@ public class EntityLayoutService {
             throw new DefaultLayoutDeletionException();
         }
         repository.delete(layout);
+    }
+
+    private EntityLayout newLayout(CreateEntityLayoutRequest request) {
+        Map<String, String> keys = validate(request.entityType(), request.label(), request.sections());
+        EntityLayout layout = EntityLayout.create(request.entityType(), request.label().strip());
+        layout.replaceSections(toSections(layout, request.sections(), keys));
+        return layout;
     }
 
     /**

@@ -7,6 +7,8 @@ import com.blusimian.blusimian.entityModel.CustomFieldSlots;
 import com.blusimian.blusimian.entityModel.EntityType;
 import com.blusimian.blusimian.entityModel.FieldDataType;
 import com.blusimian.blusimian.entityModel.StandardFieldRegistry;
+import com.blusimian.blusimian.platform.tenancy.TenantContext;
+import com.blusimian.blusimian.platform.tenancy.TenantId;
 import com.blusimian.blusimian.platform.web.BadRequestException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +17,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,6 +35,8 @@ import static org.mockito.Mockito.when;
  */
 class CustomFieldSlotAllocationTest {
 
+    private static final TenantId TENANT = new TenantId(UUID.randomUUID());
+
     private CustomFieldDefinitionRepository repository;
     private CustomFieldService service;
 
@@ -45,9 +50,10 @@ class CustomFieldSlotAllocationTest {
         service = new CustomFieldService(repository, standardFields, jdbcClient);
     }
 
+    // Bound because the slot lock is keyed by tenant.
     private CustomFieldDefinition create(String key, FieldDataType type) {
-        return service.create(EntityType.COMPANY,
-                new CustomFieldDefinitionRequest(key, key, type, false, 0));
+        return TenantContext.callAs(TENANT, () -> service.create(EntityType.COMPANY,
+                new CustomFieldDefinitionRequest(key, key, type, false, 0)));
     }
 
     @Test
@@ -113,7 +119,7 @@ class CustomFieldSlotAllocationTest {
         assertThatThrownBy(() -> create("name", FieldDataType.TEXT))
                 .isInstanceOf(ReservedFieldKeyException.class);
 
-        when(repository.existsByEntityTypeAndFieldKeyIgnoreCase(any(), any())).thenReturn(true);
+        when(repository.existsByEntityTypeAndFieldKey(any(), any())).thenReturn(true);
         assertThatThrownBy(() -> create("region", FieldDataType.TEXT))
                 .isInstanceOf(DuplicateCustomFieldKeyException.class);
 

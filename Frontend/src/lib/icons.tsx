@@ -42,3 +42,11 @@ export const CloseIcon = glyph(
 export const PlusIcon = glyph("M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z");
 
 export const ChevronRightIcon = glyph("M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z");
+
+export const PersonIcon = glyph(
+  "M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z",
+);
+
+export const LogoutIcon = glyph(
+  "M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z",
+);

@@ -20,7 +20,7 @@ import java.util.List;
  * firstName and lastName are required because their columns are NOT NULL. withMaxLength
  * mirrors each column's cap from V1__init.sql, so an over-long value comes back as a 400
  * with a field error instead of a Postgres constraint violation. email carries no cap --
- * its column is an unbounded citext -- but its EMAIL type is format-checked on write.
+ * its column is unbounded text -- but its EMAIL type is format-checked on write.
  */
 @Component
 public class ContactStandardFieldProvider implements StandardFieldProvider<Contact> {

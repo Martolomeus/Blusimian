@@ -68,7 +68,7 @@ public class EntityLayoutSection {
 
     /**
      * A new section of the layout, placing the given field keys in that order. Sort
-     * orders are spaced by ten, as in the seed. Package-private: sections are only
+     * orders are spaced by ten. Package-private: sections are only
      * built by EntityLayoutService, always as fresh rows (see its replace).
      */
     EntityLayoutSection(EntityLayout layout, String label, int columnCount, int sortOrder,

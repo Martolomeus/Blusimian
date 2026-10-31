@@ -52,11 +52,7 @@ public class Contact implements RecordEntity {
 
     private String salutation;
 
-    // email is a Postgres citext (case-insensitive text). Keep it mapped as a
-    // normal String (varchar binding, so reads/writes are plain text); the
-    // columnDefinition tells Hibernate the real DB type so ddl-auto=validate
-    // doesn't reject it as a varchar mismatch.
-    @Column(columnDefinition = "citext")
+    // Compared case-insensitively in SQL through the column's collation.
     private String email;
 
     private String phone;

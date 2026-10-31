@@ -14,6 +14,7 @@ function lazyPage(
 }
 
 export const routes: RouteObject[] = [
+  { path: "login", ...lazyPage(() => import("./features/auth/LoginPage")) },
   {
     element: <AppLayout />,
     children: [

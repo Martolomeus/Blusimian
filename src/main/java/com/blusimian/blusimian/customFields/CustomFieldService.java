@@ -8,6 +8,7 @@ import com.blusimian.blusimian.entityModel.CustomFieldSlots;
 import com.blusimian.blusimian.entityModel.EntityType;
 import com.blusimian.blusimian.entityModel.FieldDataType;
 import com.blusimian.blusimian.entityModel.StandardFieldRegistry;
+import com.blusimian.blusimian.platform.tenancy.TenantContext;
 import com.blusimian.blusimian.platform.web.BadRequestException;
 import com.blusimian.blusimian.platform.web.ErrorCode;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -37,7 +38,7 @@ public class CustomFieldService {
     /**
      * Advisory lock namespace for slot allocation. Postgres advisory locks are global to
      * the database, so the two-argument form namespaces ours: this constant is the
-     * "class", the entity type's hash is the key.
+     * "class", the hash of tenant and entity type is the key.
      */
     private static final int SLOT_LOCK_NAMESPACE = 0x5107;   // "SLOT"
 
@@ -54,6 +55,7 @@ public class CustomFieldService {
     }
 
     /** Active (non-archived) definitions for an entity, in display order -- what the form needs. */
+    @Transactional(readOnly = true)
     public List<CustomFieldDefinition> listActive(EntityType entityType) {
         return repository.findByEntityTypeAndArchivedAtIsNullOrderBySortOrderAscFieldKeyAsc(entityType);
     }
@@ -62,6 +64,7 @@ public class CustomFieldService {
      * Every definition for an entity, archived included -- the write path's "known" set,
      * so a just-archived field stays writable and existing values don't get bricked.
      */
+    @Transactional(readOnly = true)
     public List<CustomFieldDefinition> listAll(EntityType entityType) {
         return repository.findByEntityType(entityType);
     }
@@ -100,7 +103,7 @@ public class CustomFieldService {
         if (reserved) {
             throw new ReservedFieldKeyException(entityType, fieldKey);
         }
-        if (repository.existsByEntityTypeAndFieldKeyIgnoreCase(entityType, fieldKey)) {
+        if (repository.existsByEntityTypeAndFieldKey(entityType, fieldKey)) {
             throw new DuplicateCustomFieldKeyException(entityType, fieldKey);
         }
 
@@ -137,11 +140,15 @@ public class CustomFieldService {
                 .orElseThrow(() -> new CustomFieldSlotsExhaustedException(entityType, dataType, pool.size()));
     }
 
-    /** Transaction-scoped advisory lock, released automatically on commit or rollback. */
+    /**
+     * Transaction-scoped advisory lock, released automatically on commit or rollback.
+     * RLS doesn't scope advisory locks, so the key names the tenant: tenants don't wait on
+     * each other. A hash collision only serialises two unrelated creations.
+     */
     private void lockSlotAllocation(EntityType entityType) {
         jdbcClient.sql("select pg_advisory_xact_lock(?, ?)")
                 .param(SLOT_LOCK_NAMESPACE)
-                .param(entityType.name().hashCode())
+                .param((TenantContext.require() + ":" + entityType.name()).hashCode())
                 .query()
                 .listOfRows();
     }

@@ -322,7 +322,7 @@ the error banner, one line per `details` entry, not mapped back onto the canvas.
 
 ## 8. Permissions (later)
 
-Everything here is an admin function. When auth lands: the sidebar hides Settings for
+Everything here is an admin function. When roles land (login exists; roles don't): the sidebar hides Settings for
 non-admins, `/settings/**` routes redirect, and — the real guard — every
 `/api/entity-layouts` endpoint requires the admin role. The schema bundle stays open to
 every signed-in user.

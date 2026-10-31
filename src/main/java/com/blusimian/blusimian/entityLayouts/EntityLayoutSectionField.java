@@ -22,8 +22,7 @@ import java.util.UUID;
  * the field's single source of truth (so renaming a field can't leave a stale
  * snapshot here).
  *
- * field_key is a Postgres citext (case-insensitive), mapped as a plain String with
- * columnDefinition so ddl-auto=validate accepts it -- exactly like
+ * field_key compares case-insensitively in SQL through its collation, like
  * CustomFieldDefinition.fieldKey.
  */
 @Entity
@@ -38,7 +37,7 @@ public class EntityLayoutSectionField {
     @JoinColumn(name = "section_id", nullable = false)
     private EntityLayoutSection section;
 
-    @Column(name = "field_key", columnDefinition = "citext", nullable = false)
+    @Column(name = "field_key", nullable = false)
     private String fieldKey;
 
     @Column(name = "sort_order", nullable = false)

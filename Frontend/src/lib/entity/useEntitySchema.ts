@@ -9,9 +9,9 @@ import type { EntitySchema, EntityType } from "./types";
 // and refetches, the browser revalidates by itself and the server answers 304 with no
 // body. That is why there is no conditional-request code here or in lib/api.
 //
-// The bundle's layout is resolved by the backend for the current user. Once sign-in
-// exists, clear the query cache on sign-in and sign-out so one user's bundle is never
-// shown to the next.
+// The bundle is resolved by the backend for the current user and tenant. Login and
+// logout clear the query cache (features/auth), so one user's bundle is never shown to
+// the next.
 
 /** The query itself, for code outside a component (`queryClient.ensureQueryData`). */
 export function entitySchemaQuery(entityType: EntityType) {

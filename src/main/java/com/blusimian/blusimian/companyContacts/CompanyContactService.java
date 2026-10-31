@@ -42,6 +42,7 @@ public class CompanyContactService {
      * account's contacts, or contactId to get a contact's accounts; pass neither
      * for all links.
      */
+    @Transactional(readOnly = true)
     public List<CompanyContactResponse> list(UUID companyId, UUID contactId) {
         List<CompanyContact> links;
         if (companyId != null) {
@@ -54,6 +55,7 @@ public class CompanyContactService {
         return links.stream().map(CompanyContactResponse::from).toList();
     }
 
+    @Transactional(readOnly = true)
     public CompanyContactResponse get(UUID id) {
         return CompanyContactResponse.from(
                 repository.findById(id).orElseThrow(CompanyContactNotFoundException::new));

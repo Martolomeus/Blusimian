@@ -1,7 +1,7 @@
 # Custom Fields — Architecture Reference
 
-**Status:** Implemented & verified end-to-end · **Scope:** `COMPANY`, `CONTACT`, `DEAL` entities, single-tenant
-**Last updated:** 2026-10-11 · **Packages:** `com.blusimian.blusimian.customFields`, `com.blusimian.blusimian.entityModel`
+**Status:** Implemented & verified end-to-end · **Scope:** `COMPANY`, `CONTACT`, `DEAL` entities, per tenant (RLS, `Architecture/multitenancy.md`)
+**Last updated:** 2026-10-28 · **Packages:** `com.blusimian.blusimian.customFields`, `com.blusimian.blusimian.entityModel`
 
 This is the as-built reference for the custom fields feature. The record read/write machinery that
 consumes custom fields is documented in `Architecture/entity-layouts.md` §3.
@@ -51,9 +51,10 @@ through static request/response DTOs.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | uuid PK | `gen_random_uuid()` |
+| `id` | uuid | `gen_random_uuid()`; primary key `(tenant_id, id)` |
+| `tenant_id` | uuid | filled by its default from the transaction's tenant; RLS (`multitenancy.md` §5) |
 | `entity_type` | varchar(50) | CHECK `in ('COMPANY','CONTACT','DEAL')`; shared enum `entityModel.EntityType` |
-| `field_key` | `public.citext` | case-insensitive; write-once; the record's JSON key |
+| `field_key` | varchar(100), collation `app.case_insensitive` | case-insensitive; write-once; the record's JSON key |
 | `label` | varchar(255) | display name (mutable) |
 | `data_type` | varchar(30) | CHECK `in ('TEXT','URL','PHONE','EMAIL','NUMBER','BOOLEAN','DATE','LONGTEXT')`; enum `entityModel.FieldDataType` minus the built-in-only `REFERENCE` and `COUNTRY` |
 | `column_name` | varchar(20) | **the allocated slot**, e.g. `cf_text_01`; write-once |
@@ -65,18 +66,15 @@ through static request/response DTOs.
 
 Constraints / indexes:
 
-- `uq_custom_field_key unique (entity_type, field_key)` — case-insensitive via citext.
-  Spans archived rows: a key stays reserved until purge.
-- `uq_cfd_column unique (entity_type, column_name)` — one definition per slot. Also the
+- `uq_custom_field_key unique (tenant_id, entity_type, field_key)` — case-insensitive
+  through the column's collation. Spans archived rows: a key stays reserved until purge.
+- `uq_cfd_column unique (tenant_id, entity_type, column_name)` — one definition per slot. Also the
   concurrency backstop for allocation (§7).
 - `ck_cfd_column_name` — `column_name ~ '^cf_(text|num|date|bool|longtext)_[0-9]{2}$'`.
 - `ck_cfd_type_matches_slot` — the slot's pool must match `data_type`. This is the
   constraint that makes the pool safe: a NUMBER field parked in a text column is
   *unrepresentable*, not merely discouraged.
-- `ck_cfd_field_key_len` — `length(field_key) <= 100`.
-- index on `entity_type`.
-
-Both unique constraints become `(tenant_id, …)` when multitenancy lands.
+- No separate index: the by-entity reads use the uniques' leading `(tenant_id, entity_type)`.
 
 ### Values: the slot pool on `app.companies`, `app.contacts` and `app.deals`
 
@@ -100,10 +98,9 @@ sends a 4-byte length prefix even when null. That is the real argument against
 over-provisioning.
 
 The pool is deliberately **not indexed**. A slot gets an index when a field is marked
-filterable: `create index concurrently idx_companies_cf_text_03 on app.companies (cf_text_03);`
-— online, reversible, invisible to Hibernate. Once `tenant_id` lands these must be
-composite `(tenant_id, cf_*)`, because the same physical column holds different fields
-for different tenants.
+filterable: `create index concurrently idx_companies_cf_text_03 on app.companies (tenant_id, cf_text_03);`
+— online, reversible, invisible to Hibernate. It leads with `tenant_id` because the same
+physical column holds different fields for different tenants.
 
 Pool sizes are a hard product limit, but a recoverable one: widening is
 `alter table … add column cf_text_41 varchar(255)`, which is nullable with no default and
@@ -152,12 +149,13 @@ the day it was written.
 ```
 findByEntityTypeAndArchivedAtIsNullOrderBySortOrderAscFieldKeyAsc(entityType)  // read path: active only
 findByEntityType(entityType)                                                   // write path: archived included
-existsByEntityTypeAndFieldKeyIgnoreCase(entityType, fieldKey)                  // create: dup check
+existsByEntityTypeAndFieldKey(entityType, fieldKey)                            // create: dup check
 findAllocatedColumnNames(entityType)                                           // create: slot allocation
 ```
 The two list queries differ on purpose: the form shows active fields, but the write path
 must still recognise archived ones so existing values stay saveable. `fieldKey` is the
-ordering tiebreaker because `sort_order` is not unique.
+ordering tiebreaker because `sort_order` is not unique. The dup check is plain equality:
+the collation makes it case-insensitive, and unlike `upper()` it can use the index under RLS.
 
 ---
 
@@ -282,8 +280,9 @@ writes to *different* custom fields compose instead of clobbering each other.
 
 Creating a definition also claims a physical column. `CustomFieldService.create`:
 
-1. Takes a transaction-scoped Postgres advisory lock, namespaced per entity type
-   (`pg_advisory_xact_lock(0x5107, entityType.hashCode())`), released on commit.
+1. Takes a transaction-scoped Postgres advisory lock per tenant and entity type
+   (`pg_advisory_xact_lock(0x5107, (tenant + ":" + entityType).hashCode())`), released on
+   commit. RLS doesn't scope advisory locks, so the key names the tenant.
 2. Rejects a key that collides with a reserved key (built-in field or `id`/`createdAt`/
    `updatedAt`) → 409, or one already used by another custom field → 409.
 3. Allocates the **lowest free slot** in the pool matching `data_type`, so allocation stays
@@ -327,7 +326,8 @@ ApiError(Instant timestamp, int status, String error, ErrorCode code,
 FieldError(String field, String reason)
 ```
 
-`ErrorCode`: `VALIDATION_ERROR`, `CUSTOM_FIELD_INVALID`, `NOT_FOUND`, `CONFLICT`.
+`ErrorCode`: `VALIDATION_ERROR`, `CUSTOM_FIELD_INVALID`, `NOT_FOUND`, `CONFLICT`,
+`UNAUTHENTICATED`, `INVALID_CREDENTIALS`.
 `CUSTOM_FIELD_INVALID` is **dead** — record validation now reports `VALIDATION_ERROR`
 whether the offending field is built-in or custom, since the API doesn't distinguish them.
 Remove the constant, or start using it.
@@ -338,7 +338,10 @@ these. `GlobalExceptionHandler` has one handler for `ApiException`, plus handler
 normalising framework errors to clean 400s (no stack-trace leakage):
 `MethodArgumentNotValidException`, `MethodArgumentTypeMismatchException`,
 `HttpMessageNotReadableException`, and `DataIntegrityViolationException` → 409 with a
-deliberately generic message (the raw text names constraints and echoes values).
+deliberately generic message (the raw text names constraints and echoes values). A failed
+login (`AuthenticationException`) is a 401 `INVALID_CREDENTIALS`; a request without a
+session gets the same `ApiError` shape from Spring Security's entry point (401
+`UNAUTHENTICATED`).
 
 Design note: house-style `ApiError`, deliberately not RFC 9457 `ProblemDetail`.
 
@@ -359,7 +362,7 @@ and unknown values.
 
 **Deferred:** PUT/update of definitions (label and `sort_order` are the mutable parts);
 purge + slot reclamation; picklist types and the `config` column; definition caching;
-per-field filterable flag and its index management; multitenancy (`tenant_id` + RLS).
+per-field filterable flag and its index management.
 
 **Known limitations:**
 
@@ -425,6 +428,4 @@ promoted). Mature CRM platforms converge on pools or real DDL for this reason.
   `config` jsonb column; map it on the entity when first needed.
 - **Make a field filterable:** `create index concurrently` on its slot, and record the flag
   on the definition so the query builder knows the index exists.
-- **Multitenancy:** add `tenant_id`; widen both unique constraints and every slot index to
-  lead with it; filter repository queries or rely on Postgres RLS. Note RLS is a no-op for
-  superusers and table owners, and `spring.datasource.username` is currently `postgres`.
+- **A new tenant-scoped table:** follow the recipe in `multitenancy.md` §17.

@@ -1,6 +1,7 @@
 package com.blusimian.blusimian.countries;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -18,6 +19,7 @@ public class CountryService {
         this.repository = repository;
     }
 
+    @Transactional(readOnly = true)
     public List<IsoCountry> list() {
         return repository.findAllByOrderBySortOrderAscNameAsc();
     }

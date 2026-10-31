@@ -29,11 +29,10 @@ public interface CustomFieldDefinitionRepository extends JpaRepository<CustomFie
     List<CustomFieldDefinition> findByEntityType(EntityType entityType);
 
     // For the create path's uniqueness check. Spans archived rows too (an archived
-    // key still occupies the slot, matching the unique constraint). IgnoreCase
-    // forces upper(field_key)=upper(?), so it matches the citext constraint's
-    // case-insensitivity -- a bound String parameter alone compares as plain text,
-    // which would let a differently-cased duplicate slip past into a 500.
-    boolean existsByEntityTypeAndFieldKeyIgnoreCase(EntityType entityType, String fieldKey);
+    // key still occupies the slot, matching the unique constraint). Plain equality is
+    // case-insensitive through field_key's collation, and unlike upper() it can use
+    // the index under RLS.
+    boolean existsByEntityTypeAndFieldKey(EntityType entityType, String fieldKey);
 
     // For slot allocation: which pool columns are already spoken for on this entity.
     // Spans archived rows -- an archived field keeps its slot, because its values must

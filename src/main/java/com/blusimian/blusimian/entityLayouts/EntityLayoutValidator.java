@@ -24,7 +24,8 @@ import java.util.Set;
  * -- otherwise a record of the entity could not be created through the layout.
  *
  * Labels are checked as they will be stored, stripped of surrounding whitespace. Keys
- * are matched case-insensitively, like placements everywhere else (field_key is citext).
+ * are matched case-insensitively, like placements everywhere else (field_key's collation
+ * is case-insensitive).
  *
  * The paths in `field` say where each problem is, for any API client; they are
  * informative, not a contract.
