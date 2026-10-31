@@ -1,7 +1,7 @@
 # Custom Objects — Architecture Proposal
 
 **Status:** Proposal, nothing implemented · **Scope:** tenant-defined object types next to the built-in ones
-**Date:** 2026-09-23 · **Builds on (as-built):** `Architecture/custom-fields.md`, `Architecture/entity-layouts.md`
+**Date:** 2026-09-23 · **Builds on (as-built):** `Architecture/custom-fields.md`, `Architecture/entity-layouts.md` · **Must also extend:** `WIP/roles-and-permissions.md` (§12)
 
 > Third pillar of entity-level customization. Custom fields decide **which fields exist**
 > on an object and layouts decide **how they're arranged**. Custom objects decide **which
@@ -45,6 +45,7 @@ worlds cleanly, in Java and in the database.
 | D5 | New slice `customObjects`; `entityModel` reaches it only via an SPI (`CustomObjectCatalog`). | §7 |
 | D6 | The union "all objects for this tenant" is built **in Java** (`StandardObject.values()` + catalog), not in SQL. | §8 |
 | D7 | Tenant-specific tweaks to standard objects (a renamed label, say) go in a **sparse** override table later: a row only when a tenant actually changed something. | §11 |
+| D8 | Custom objects join the role and permission setup: `app.custom_entity_permissions`, one sparse row per role and object. `WIP/roles-and-permissions.md` leaves this out because custom objects don't exist yet, so **it's part of building them.** | §12 |
 
 ---
 
@@ -474,8 +475,8 @@ Mirrors custom fields: archive now, purge later.
    finds it, so its record, schema and field endpoints return 404. Data, fields and
    layouts are kept.
 2. **Purge** (deferred): `delete from app.custom_object_definitions where id = ?`. The
-   `on delete cascade` FKs from §4 and §6 remove its custom field definitions, layouts
-   (and their sections, via existing cascades) and all records. The whole payoff of D2:
+   `on delete cascade` FKs from §4, §6 and §12 remove its custom field definitions, layouts
+   (and their sections, via existing cascades), all records and its role permission rows. The whole payoff of D2:
    purge doesn't need a list of referencing tables, and a future object-scoped feature
    that uses the §4 column shape is purged automatically.
 
@@ -506,7 +507,82 @@ returns `Optional` and the schema bundle already tolerates `layout: null`, so no
 
 ---
 
-## 12. Implementation phases
+## 12. Roles and permissions (D8)
+
+`WIP/roles-and-permissions.md` covers Contact, Company, Deal and app-wide permissions. It
+leaves custom objects out because they don't exist yet, so that setup has to be added here.
+Skipping it isn't an option once permissions are enforced: only Administrator could reach
+custom records.
+
+The rules are that spec's. Everything defaults to `false`, and a role with Create must keep
+Read and Edit on every required field (its D4 and D12).
+
+```sql
+create table app.custom_entity_permissions
+(
+    id               uuid        not null default gen_random_uuid(),
+    tenant_id        uuid        not null default app.current_tenant_id()
+        references app.tenants (id),
+    role_id          uuid        not null,
+    custom_object_id uuid        not null,
+
+    can_read         boolean     not null default false,
+    can_create       boolean     not null default false,
+    can_edit         boolean     not null default false,
+    can_delete       boolean     not null default false,
+
+    created_at       timestamptz not null default now(),
+    updated_at       timestamptz not null default now(),
+
+    name_read boolean not null default false, name_edit boolean not null default false,
+    -- … one pair per cf_* slot, 105 in all …
+
+    constraint pk_custom_entity_permissions primary key (tenant_id, id),
+    constraint uq_custom_entity_permissions_role unique (tenant_id, role_id, custom_object_id),
+    constraint fk_custom_entity_permissions_role_id foreign key (tenant_id, role_id)
+        references app.roles (tenant_id, id) on delete cascade,
+    constraint fk_custom_entity_permissions_object foreign key (tenant_id, custom_object_id)
+        references app.custom_object_definitions (tenant_id, id) on delete cascade,
+    constraint ck_custom_entity_permissions_crud
+        check (can_read or not (can_create or can_edit or can_delete)),
+    constraint ck_custom_entity_permissions_required
+        check (not can_create or (name_read and name_edit))
+);
+```
+
+- **One table for every custom object.** Each object has its own 105 slots (§6), so a bit
+  named `cf_text_03_read` means whatever that object's `cf_text_03` means. Slot-keyed bits
+  carry over unchanged.
+- **Sparse, unlike the standard tables.** No row means no access. A row is created when an
+  admin first ticks something for that role and object. So creating a custom object writes
+  nothing here, `customObjects` needs no dependency on `roles`, and Administrator needs no
+  row, because the resolver grants it everything.
+- **`name` is required on every custom object** (§6), which is what
+  `ck_custom_entity_permissions_required` holds.
+- **Not the two-column shape of §4.** This table only ever points at custom objects:
+  standard objects have tables of their own. A plain `custom_object_id` with an FK is enough.
+- **Purge** cascades (§10). Purging one custom field must also reset its slot's pair on this
+  table, as it must on the standard ones: otherwise the next field in that slot inherits
+  the old field's grants.
+
+What changes in `roles` (Phase 0 first moves it from `EntityType` to `ObjectType`):
+
+| Code | Change |
+|---|---|
+| `EntityPermissionRepository` | Takes `ObjectType`. The `table` `switch` gains the sealed `CustomObjectType` case, and statements on this table also filter by `custom_object_id`. A row may not exist, so `find` can't use `singleRow()` here. |
+| `FieldPermissionCatalog` | Takes `ObjectType`: `name`, then the object's active custom fields. |
+| `PermissionColumnsVerifier` | Also checks this table: the `name` pair plus a pair per slot. |
+| `CustomFieldCreated`, `RequiredFieldGrants` | The event names the object. A required field on a custom object reaches only that object's rows with Create. |
+| `RoleService` | Takes the field lock for each custom object the request names too (§11 already keys that lock by object). |
+| `RoleValidator` | `entities` must still hold every standard object, but custom objects are optional. An unknown or archived key is a 400. |
+| Role document | `entities` gains one entry per custom object the role has a row for, keyed by object key (`project__c`). |
+| Role editor | One section per active custom object, after the standard ones. A missing entry shows everything off. |
+| `app_permissions` | Gains `manage_custom_objects`, guarding writes on `/api/objects`. |
+| The resolver, if built by then | A missing row means no access. |
+
+---
+
+## 13. Implementation phases
 
 Each phase ends green, following the dev-phase V1 policy (edit V1, wipe the DB).
 
@@ -515,8 +591,12 @@ Each phase ends green, following the dev-phase V1 policy (edit V1, wipe the DB).
 | **0. ObjectType refactor** | Sealed `ObjectType` + `StandardObject` enum replace `EntityType`; `ObjectRef` embeddable; two-column + generated `object_key` on `custom_field_definitions` and `entity_layouts`; repositories query by `object_key`. Custom side of the columns exists but is never set. | None. All existing tests pass. |
 | **1. Object catalog** | `custom_object_definitions`, `customObjects` slice (admin CRUD), `CustomObjectCatalog` SPI, `ObjectTypeResolver`, new converter (404 on unknown). | Custom fields and layouts can be defined on a custom object. |
 | **2. Records** | `custom_records` + `CustomRecord`, `CustomRecordFields`, `CustomRecordRepository` (object-scoped), `/api/records/{objectKey}`. | Custom objects are usable end to end. |
-| **3. Schema bundle** | `kind` + `recordsPath` on the schema response; `GET /api/objects` lists standard + custom. | Frontend can render any object generically. |
-| **4. Purge** | Hard delete with cascades. | — |
+| **3. Permissions** | §12: `custom_entity_permissions`, the `roles` changes, the role editor sections. | Roles can be granted access to custom objects. |
+| **4. Schema bundle** | `kind` + `recordsPath` on the schema response; `GET /api/objects` lists standard + custom. | Frontend can render any object generically. |
+| **5. Purge** | Hard delete with cascades. | — |
+
+If permissions are enforced by the time this is built, Phases 2 and 3 ship together: without
+Phase 3, only Administrator can reach custom records.
 
 Phase 0 is worth doing now, while only `COMPANY` exists: it's the change that touches every
 file with `EntityType`, and it only gets more expensive as `CONTACT` and `DEAL` arrive.
@@ -524,11 +604,12 @@ file with `EntityType`, and it only gets more expensive as `CONTACT` and `DEAL` 
 **Tests to add alongside:** `object_key` generation matches `storageKey()` (§4); the
 `num_nonnulls` CHECK rejects both/neither; resolver precedence and the 404; cross-object
 isolation (reading project A's id through invoice's path is a 404); purge cascades to
-fields, layouts and records.
+fields, layouts, records and permission rows; a role with no row has no access; a role with
+Create can't close `name`; a required field reaches only that object's rows with Create.
 
 ---
 
-## 13. Out of scope / open questions
+## 14. Out of scope / open questions
 
 - **Lookup (relationship) fields.** Needed before custom objects are really useful in a
   CRM (`project__c → Company`). Sketch: a `LOOKUP` `FieldDataType` with a `cf_ref_NN uuid`
