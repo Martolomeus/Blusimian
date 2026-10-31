@@ -13,6 +13,7 @@ import com.blusimian.blusimian.platform.web.BadRequestException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.util.List;
@@ -47,7 +48,7 @@ class CustomFieldSlotAllocationTest {
         when(standardFields.reservedKeysFor(any())).thenReturn(Set.of("name", "website", "id"));
         JdbcClient jdbcClient = mock(JdbcClient.class, RETURNS_DEEP_STUBS);
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        service = new CustomFieldService(repository, standardFields, jdbcClient);
+        service = new CustomFieldService(repository, standardFields, jdbcClient, mock(ApplicationEventPublisher.class));
     }
 
     // Bound because the slot lock is keyed by tenant.

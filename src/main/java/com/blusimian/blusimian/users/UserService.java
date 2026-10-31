@@ -1,5 +1,6 @@
 package com.blusimian.blusimian.users;
 
+import com.blusimian.blusimian.users.exception.UserNotFoundException;
 import com.blusimian.blusimian.users.exception.UsernameTakenException;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -8,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.UUID;
 
 /** Business logic for the current tenant's users. */
 @Service
@@ -28,6 +30,11 @@ public class UserService {
         return repository.findAllByOrderByUsernameAsc();
     }
 
+    @Transactional(readOnly = true)
+    public User get(UUID id) {
+        return repository.findById(id).orElseThrow(UserNotFoundException::new);
+    }
+
     /**
      * A new user in the current tenant. Usernames are unique across all tenants, which a
      * check under RLS can't see, so the unique violation is translated instead.
@@ -44,5 +51,12 @@ public class UserService {
             }
             throw e;
         }
+    }
+
+    @Transactional
+    public User rename(UUID id, String displayName) {
+        User user = repository.findById(id).orElseThrow(UserNotFoundException::new);
+        user.rename(displayName.strip());
+        return repository.saveAndFlush(user);
     }
 }

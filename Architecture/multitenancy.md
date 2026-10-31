@@ -1,7 +1,7 @@
 # Multitenancy — Tenant Isolation with Row-Level Security — Architecture Reference
 
 **Status:** Implemented & verified (§15) · **Scope:** tenants, users, `tenant_id` + RLS on every tenant-scoped table, binding the request's tenant to the database, minimal username/password login
-**Last updated:** 2026-10-28 · **Builds on:** the `app`/`public` schema split in `V1__init.sql`, `Architecture/custom-fields.md`, `Architecture/entity-layouts.md`
+**Last updated:** 2026-10-31 · **Builds on:** the `app`/`public` schema split in `V1__init.sql`, `Architecture/custom-fields.md`, `Architecture/entity-layouts.md`
 **Code:** `src/main/resources/db/migration/V1__init.sql`, `platform/tenancy`, `platform/security`, `tenants`, `users`, `auth` packages; `docker/`, `docker-compose.yml`, `Makefile`, `application.properties`; `Frontend/src/features/auth`
 
 > Tenant data lives in `app`, global reference data in `public`. This is the tenant layer
@@ -42,7 +42,6 @@
 
 - Secure auth: CSRF tokens, rate limiting, lockout, password rules, password reset, MFA,
   OIDC/JWT.
-- Roles and permissions inside a tenant.
 - One user belonging to several tenants.
 - Self-service signup, tenant deletion/offboarding, a cross-tenant admin console.
 - Per-tenant reference data (e.g. "this tenant's enabled countries").
@@ -471,6 +470,10 @@ create collation app.case_insensitive (provider = icu, locale = 'und-u-ks-level2
 | `app.entity_layouts` | ✓ | `(tenant_id, id)` | — | all four |
 | `app.entity_layout_sections` | ✓ | `(tenant_id, id)` | `layout_id` → entity_layouts, cascade | all four |
 | `app.entity_layout_section_fields` | ✓ | `(tenant_id, id)` | `section_id` → sections, cascade | all four |
+| `app.roles` | ✓ | `(tenant_id, id)` | — | all four |
+| `app.role_assignments` | ✓ | `(tenant_id, id)` | `user_id` → users, cascade; `role_id` → roles, restrict | all four |
+| `app.app_permissions` | ✓ | `(tenant_id, id)` | `role_id` → roles, cascade | all four |
+| `app.contact_permissions`, `app.company_permissions`, `app.deal_permissions` | ✓ | `(tenant_id, id)` | `role_id` → roles, cascade | all four |
 | `public.iso_countries` | — (global) | `(code)` | — | select only; no RLS |
 
 "All four" means select, insert, update and delete, never more (§5.3).
@@ -1191,7 +1194,7 @@ public record NewTenant(TenantId id, String name,
 
 public interface TenantInitializer {
     /** Called once per new tenant, inside the provisioning transaction, with the tenant bound. */
-    void initialize(TenantId tenant);
+    void initialize(TenantId tenant, UUID firstUserId);
 }
 ```
 
@@ -1209,8 +1212,8 @@ public class TenantProvisioningService {
     public TenantId provision(NewTenant request) {
         return TenantContext.callAs(request.id(), () -> transaction.execute(status -> {
             tenants.save(Tenant.create(request.id(), request.name()));
-            users.create(request.adminUsername(), request.adminDisplayName(), request.adminPassword());
-            initializers.forEach(initializer -> initializer.initialize(request.id()));
+            User first = users.create(request.adminUsername(), request.adminDisplayName(), request.adminPassword());
+            initializers.forEach(initializer -> initializer.initialize(request.id(), first.getId()));
             return request.id();
         }));
     }
@@ -1228,6 +1231,9 @@ public class TenantProvisioningService {
   open transaction (§7.2). Calling `provision()` from transactional code therefore fails
   loudly, rather than running the new tenant's work under the caller's tenant.
 - **All or nothing.** If an initializer fails, the tenant and its user roll back with it.
+- **`RolesInitializer` needs the first user:** it creates Administrator and Standard user
+  and makes that user an Administrator (`roles-and-permissions.md` §3.6).
+  `DefaultLayoutsInitializer` ignores the argument.
 - `Tenant` has an assigned id, so it implements `Persistable<UUID>` (`isNew()` is true
   until it's persisted). Otherwise `save()` would `merge`, which starts with a `select`.
 
@@ -1504,8 +1510,8 @@ tests catch a missing step 8. Steps 2–4 and 7 are review items.
    `memberships (tenant_id, user_id, role)` before real customers arrive? Changing it later
    means a data migration. Recommendation: not now. A globally unique username already
    acts as a global identity, so the split stays open.
-3. **Roles within a tenant** (admin vs member). Layout and custom-field settings are admin
-   actions, and `entity-layouts.md` expects role-based layout assignment.
+3. **Roles within a tenant.** Answered: `roles-and-permissions.md`. Enforcing them is still
+   to come, and layouts follow job titles rather than roles (`WIP/job-title-layouts.md`).
 4. **Tenant offboarding**: hard delete with cascades, a soft `status`, or export first.
 5. **Testcontainers** for integration tests (a fresh database per run, CI-friendly). The
    container needs the roles init script, and the tests need app-role credentials, not the

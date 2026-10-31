@@ -1,7 +1,7 @@
 # Settings & Layout Editor — Architecture Reference
 
-**Status:** Implemented & verified · **Scope:** the settings area, and managing entity layouts from it (`COMPANY`, `CONTACT`, `DEAL`)
-**Last updated:** 2026-10-25 · **Stack:** as `frontend-entity-pages.md`, plus `@dnd-kit/core` 6.3.1, `@dnd-kit/sortable` 10.0.0, `@dnd-kit/utilities` 3.2.2
+**Status:** Implemented & verified · **Scope:** the settings area, and managing entity layouts from it (`COMPANY`, `CONTACT`, `DEAL`). Roles and users are in `Architecture/roles-and-permissions.md` §5
+**Last updated:** 2026-10-31 · **Stack:** as `frontend-entity-pages.md`, plus `@dnd-kit/core` 6.3.1, `@dnd-kit/sortable` 10.0.0, `@dnd-kit/utilities` 3.2.2
 **Code:** `Frontend/src/features/settings`, `Frontend/src/lib/layouts`, `Frontend/src/components/settings`
 
 This is the as-built reference for the settings area and the layout editor. The
@@ -12,12 +12,13 @@ pages render a layout is in `Architecture/frontend-entity-pages.md`.
 
 ## 1. Purpose
 
-Layouts are stored data. The settings area is where an admin manages them: list every
-layout of every entity, create, duplicate and delete them, choose each entity's default,
-and arrange a layout's sections and fields in an editor.
+The settings area is where an admin configures the tenant, in collapsible sections of
+cards. **General** holds Roles and Users. **CRM** and **Sales** hold one settings page per
+entity, whose Layouts section lists that entity's layouts: create, duplicate and delete
+them, choose the default, and arrange a layout's sections and fields in an editor.
 
-Only the default layout is shown on record pages until layouts can be assigned to roles.
-Other layouts can be built and kept, and the layouts page says so.
+Only the default layout is shown on record pages until layouts can be assigned. Other
+layouts can be built and kept, and the Layouts section says so.
 
 ---
 
@@ -29,22 +30,35 @@ Sidebar
  │   (.sidebar-nav grows)
  └─ Settings            /settings                       ← pinned to the bottom
 
-/settings                  Settings overview (card grid)
-/settings/layouts          Entity layouts (list, grouped by entity)
-/settings/layouts/:id      Layout editor, on a stored layout
-/settings/layouts/new      Layout editor, on a layout not stored yet:
-    ?entity=deal             blank
-    ?from=<id>               a copy of that layout
+/settings                              Settings overview: sections of cards
+/settings/roles                        Roles list
+/settings/roles/new                    Role editor, on a role not stored yet
+    ?from=<id>                           a copy of that role
+/settings/roles/:id                    Role editor
+/settings/users                        Users list
+/settings/users/:id                    User page
+/settings/:entity                      Entity settings: sections (today: Layouts)
+/settings/:entity/layouts              → redirects to /settings/:entity
+/settings/:entity/layouts/:id          Layout editor, on a stored layout of that entity
+/settings/:entity/layouts/new          Layout editor, blank layout of that entity
+    ?from=<id>                           a copy of that layout (must be of that entity)
 ```
 
+- `:entity` is the entity's route segment (`contacts`, `companies`, `deals`), matched
+  case-insensitively, so `/contacts` and `/settings/contacts` belong together. The overview
+  section (General, CRM, Sales) is **not** in the URL: it's a heading, not a page, and an
+  entity's URL stays the same if it moves section.
+- React Router ranks static segments above dynamic ones, so `/settings/roles` beats
+  `/settings/:entity`. A new static settings page just must not take an entity's plural.
 - The sidebar's Settings link sits in `.sidebar-footer`, after `.sidebar-nav`. Because
   `.sidebar-nav` is `flex: 1`, the footer lands at the bottom with no spacer. It uses the
   same link class as the entity links, so hover, active and the collapsed / expanded
   behaviour are identical. It is active on any `/settings` path.
-- Every settings sub-page starts with a back link (`.page-back`): `← Settings` on the
-  layouts page, `← Entity layouts` in the editor.
-- The three routes are lazy pages in `router.tsx`. `@dnd-kit` is only in the editor's
-  chunk.
+- Every settings sub-page starts with one back link (`.page-back`), no breadcrumb trail:
+  `← Settings` on `/settings/:entity`, the Roles list and the Users list; `← Contact settings`
+  in the editor, in any state; `← Roles` and `← Users` on the detail pages; `← Settings` for
+  an unknown `:entity`.
+- Every page is a lazy route in `router.tsx`. `@dnd-kit` is only in the editor's chunk.
 
 ---
 
@@ -52,29 +66,44 @@ Sidebar
 
 ### 3.1 Overview
 
-`features/settings/SettingsPage.tsx`: a title, a muted intro (`.page-intro`) and a grid
-(`.settings-grid`, `repeat(auto-fill, minmax(260px, 1fr))`) of `SettingsCard`s. The list
-of sections is `SECTIONS` in that file, its only user.
+`features/settings/SettingsPage.tsx`: a title, a muted intro (`.page-intro`), then one
+`SettingsSection` per entry in `SECTIONS`, its only user, each holding a `.settings-grid`
+(`repeat(auto-fill, minmax(260px, 1fr))`) of `SettingsCard`s: **General** (Roles, Users),
+**CRM** (Contact, Company), **Sales** (Deal). Every entity has a card in exactly one section.
 
-**Adding a settings section** = one entry in `SECTIONS` + its routes in `router.tsx`.
+**Adding to the overview** = a card in a section's `cards`, or one entry in `SECTIONS`, plus
+its routes in `router.tsx`.
 
 ### 3.2 `SettingsCard`
 
-`components/settings/SettingsCard.tsx` — `{ title, description, to, icon? }`. The only
-generic settings component. It renders a single `<Link>`, so the card is one tab stop,
+`components/settings/SettingsCard.tsx` — `{ title, description, to, icon? }`. It renders a single `<Link>`, so the card is one tab stop,
 the whole surface is clickable, and middle-click opens a new tab. The description is
 clamped to two lines. It knows nothing about which settings exist.
 
-There is no generic settings framework (shared page shell, settings search, nested
-navigation). Those get built once a second settings page exists.
+### 3.3 `SettingsSection`
 
-### 3.3 Shared pieces
+`components/settings/SettingsSection.tsx` — `{ storageKey, title, count?, description?, actions?, children }`.
+One collapsible block of a settings page, knowing nothing about which settings exist. A
+page is a stack of these; the content is whatever the section needs.
+
+- **The WAI-ARIA disclosure pattern:** a real `<button>` inside the `<h2>`, so Enter and
+  Space work natively. Actions sit outside it, which is why it isn't `<details>/<summary>`:
+  a button can't nest in a button.
+- **The body is `hidden`, not unmounted,** so state inside a collapsed section survives, and
+  hidden content leaves the tab order. `hidden` can't animate, so the expand is instant.
+- **Collapsed state is per viewer and per section**, in
+  `localStorage["blusimian:settings-collapsed:<storageKey>"]`, read once. `storageKey` is
+  unique app-wide: `overview/crm`, `contacts/layouts`. With no storage, sections start
+  expanded and still toggle.
+
+### 3.4 Shared pieces
 
 | Piece | Where | Used for |
 |---|---|---|
-| `ConfirmDialog` | `components/ui/ConfirmDialog.tsx` | deleting a layout; discarding unsaved changes. Wraps `Modal` (`sm`): title, message, Cancel (focused on open) and a confirm button (`primary` or `danger`). `isPending` disables both and keeps it open. `RecordDetail`'s `window.confirm` can move to it. |
-| Non-entity icons | `lib/icons.tsx` | gear, layout, drag handle, star (filled and outline), copy, trash, close, plus, chevron. Inline MUI paths, like `lib/entity-icons.tsx`, which stays about entities. |
+| `ConfirmDialog` | `components/ui/ConfirmDialog.tsx` | deleting a layout or a role; discarding unsaved changes. Wraps `Modal` (`sm`): title, message, Cancel (focused on open) and a confirm button (`primary` or `danger`). `isPending` disables both and keeps it open. `RecordDetail`'s `window.confirm` can move to it. |
+| Non-entity icons | `lib/icons.tsx` | gear, layout, drag handle, star (filled and outline), copy, trash, close, plus, chevron, person, shield, lock. Inline MUI paths, like `lib/entity-icons.tsx`, which stays about entities. |
 | `.badge` | `features/settings/layouts/layouts.module.css` | "Default", data-type and similar pills |
+| `useUnsavedChangesGuard(dirty)` | `lib/useUnsavedChangesGuard.ts` | leaving with unsaved changes: `useBlocker`, `beforeunload`, the `leaving` ref. Returns `allowLeaving` and the props for a `ConfirmDialog`. Used by both editors and the User page (§6.6). |
 
 Icon-only buttons are `Button variant="ghost" size="sm"` with an icon child, an
 `aria-label` and a `title`. The section column count is the existing `Select`.
@@ -91,18 +120,19 @@ No JSX, same rule as `lib/entity`.
 | `layouts.ts` | `useLayoutList`, `useCreateLayout`, `useUpdateLayout`, `useSetDefaultLayout`, `useDeleteLayout`; `MAX_LAYOUTS_PER_ENTITY`. |
 | `layoutDraft.ts` | the editor's model: `LayoutDraft`, `reconcile`, `fromLayout`, `blankDraft`, `copyDraft`, `toRequest`, the reducer and its action creators, the refusals, and the selectors (§6.2). |
 
-**One read.** `useLayoutList()` (query key `["entity-layouts"]`) is every layout of every
-entity as a full tree. Both the list page and the editor read from it; there is no
-get-by-id.
+**One read.** `useLayoutList(entityType)` (query key `["entity-layouts", entityType]`, one
+cache entry per entity) is an entity's layouts as full trees, from
+`GET /api/entity-layouts/{entityType}`. Both the Layouts section and the editor read from
+it; there is no get-by-id.
 
-**Writes** put their result straight into the list cache (so the editor of a
-just-created layout finds it before the refetch), then invalidate `["entity-layouts"]`
-and `["entity-schema", entityType]`. The schema bundle's ETag follows its content, so
+**Writes** put their result straight into their entity's list cache (so the editor of a
+just-created layout finds it before the refetch), then invalidate that list and
+`["entity-schema", entityType]`. The schema bundle's ETag follows its content, so
 record pages pick up an edited or newly chosen default on their next fetch, and the
 refetch is a 304 when nothing changed.
 
 **Creating** happens in the editor, not on click. New layout and Duplicate open
-`/settings/layouts/new` (§6) on a draft that exists only in the page; nothing is stored
+`/settings/:entity/layouts/new` (§6) on a draft that exists only in the page; nothing is stored
 until Save, which posts it with `useCreateLayout()` (a plain `POST` of a
 `CreateLayoutRequest`). Leaving before that leaves nothing behind. The draft starts as:
 
@@ -117,38 +147,50 @@ would reject.
 
 ---
 
-## 5. Entity layouts page (`/settings/layouts`)
+## 5. Entity settings page (`/settings/:entity`)
 
-`LayoutSettingsPage` groups the list by entity, in `ENTITIES` (sidebar) order, one
-`LayoutGroup` each, all on one page. Within a group the default comes first, then by
-label.
+`features/settings/entity/EntitySettingsPage.tsx`: one page for every entity, driven by
+`ENTITIES`, with no page per entity. Title `Contact settings`, intro "Configure how
+contacts work for your organisation." If `:entity` matches nothing it shows "This settings
+page doesn't exist." under `← Settings`, as the editor's routes do.
+
+The page itself fetches nothing. Each section loads its own data and shows its own loading
+and error states, so a slow or failing section doesn't block the others. Sections are
+written out in the page, with no registry. **Adding one** means a component rendering
+`SettingsSection` with `storageKey={`${segment}/<name>`}`, listed there, and an update to the
+entity card's description.
+
+### Layouts section
+
+`features/settings/layouts/LayoutsSection.tsx`: a `SettingsSection` titled "Layouts", with
+the count and New layout in its header. The default comes first, then by label.
 
 - **Row:** label (a link), `★ Default` badge, `N sections · M fields` (counted from the
   stored tree), actions. The whole row opens the editor, as list tables do; the actions
   stop propagation, also on disabled buttons.
 - **Actions:** ☆ set as default (not on the default row), ⧉ duplicate (opens the editor
   on a copy, stored only on Save), 🗑 delete through `ConfirmDialog` (disabled on the
-  default row, with the reason as its title). "New layout" in the group header opens the
-  editor on a blank layout the same way.
-- **Limit:** at 20 layouts the group's "New layout" and every Duplicate are disabled,
+  default row, with the reason as its title). "New layout" in the section header opens the
+  editor on a blank layout the same way, and stays usable while the section is collapsed.
+- **Limit:** at 20 layouts the section's "New layout" and every Duplicate are disabled,
   titled "A company can have at most 20 layouts. Delete one to add another." The server
   checks again on Save; its 409 shows in the editor's error banner.
 - Set default and delete each disable only their own control while they run. An error
-  shows under the group header and is cleared by the next action.
-- The page intro says that only the default is shown on record pages today. When role
-  assignment ships, that sentence goes and rows gain an "Assigned to" column.
+  shows at the top of the section and is cleared by the next action.
+- The section's description says that only the default is shown on record pages today.
+  When layout assignment ships, that sentence goes and rows gain an "Assigned to" column.
 
 ---
 
-## 6. Layout editor (`/settings/layouts/:id` and `/settings/layouts/new`)
+## 6. Layout editor (`/settings/:entity/layouts/:id` and `/settings/:entity/layouts/new`)
 
 ### 6.1 Shape
 
 ```
-LayoutEditorPage (:id)         reads :id, finds the layout in the list; loading / not found / error
+LayoutEditorPage (:id)         reads :entity and :id, finds the layout in its entity's list; loading / not found / error
   └─ LayoutEditorWithFields    loads the entity's schema bundle (the field dictionary); Save = PUT
        └─ LayoutEditor         (below)
-NewLayoutPage (new)            reads ?entity / ?from; for a copy, finds the source in the list
+NewLayoutPage (new)            reads :entity and ?from; for a copy, finds the source in the list
   └─ NewLayoutWithFields       loads the schema bundle; starts from blankDraft / copyDraft; Save = POST
        └─ LayoutEditor         owns the reducer, save, unsaved-changes guard
             ├─ header          entity icon, label input (styled as the title), Default badge, Cancel, Save
@@ -163,15 +205,17 @@ The two pages decide what the draft starts from and how Save stores it; they pas
 `LayoutEditor` an `initial` draft, a `save(request)` that resolves to the stored layout,
 and `isNew`. `LayoutEditorWithFields` is keyed by layout id and `NewLayoutWithFields` by
 the query, so moving to another layout or starting point starts from a fresh draft.
-Background refetches of the list or the schema don't reset the draft. Path helpers and
-the `/new` query (`newLayoutPath`, `newLayoutStart`) are in `layouts/paths.ts`.
+Background refetches of the list or the schema don't reset the draft. `layouts/paths.ts`
+has `layoutPath(type, id)`, `newLayoutPath(type, from?)` and `newLayoutSource(params)`;
+`features/settings/paths.ts` has the rest. A layout is found only under its own entity's
+URL: any other entity's list doesn't hold it, so it "doesn't exist" there.
 
 | State | Shown |
 |---|---|
+| unknown `:entity` | "This settings page doesn't exist." (`← Settings`) |
 | list or schema loading | "Loading…" |
-| id not in the list | "This layout doesn't exist (it may have been deleted)." |
-| `?from` not in the list | "The layout to copy doesn't exist (it may have been deleted)." |
-| no `?from`, no known `?entity` | "This link doesn't say which layout to start from." (`?entity` is case-insensitive) |
+| `:id` not in the list, or of another entity | "This layout doesn't exist (it may have been deleted)." |
+| `?from` not in the list, or of another entity | "The layout to copy doesn't exist (it may have been deleted)." |
 | list or schema error | `.page-error` with the message |
 
 Below 900px (the same breakpoint as `LayoutSection`) the palette moves under the canvas
@@ -284,16 +328,16 @@ the error banner, one line per `details` entry, not mapped back onto the canvas.
 - **Save, stored layout** (`PUT`, whole tree) → the returned layout goes into the list
   cache, and the draft is reset from it, so the editor is clean again. Last save wins.
 - **Save, new layout** (`POST`) → the created layout goes into the list cache, and the
-  editor moves to `/settings/layouts/:id` with `replace`, so Back goes to the list rather
-  than to `/new`, where Save would create a second copy. The `:id` page finds the layout in
+  editor moves to `/settings/:entity/layouts/:id` with `replace`, so Back goes to the entity
+  page rather than to `/new`, where Save would create a second copy. The `:id` page finds the layout in
   the cache, with no fetch. Save is enabled before any change (nothing is stored yet), and
   stays disabled from the create until the move, so a double click can't post twice. The
   subtitle reads "… layout · not saved yet".
-- **Unsaved changes:** react-router's `useBlocker` shows `ConfirmDialog` "Discard unsaved
+- **Unsaved changes** (`useUnsavedChangesGuard`): react-router's `useBlocker` shows `ConfirmDialog` "Discard unsaved
   changes?" for any in-app navigation, Cancel included, while the draft differs from where
   it started; a `beforeunload` listener covers reload and tab close. An untouched new
   layout leaves without asking: nothing is lost. The move after creating runs before React
-  re-renders, while `dirty` is still true, so a `leaving` ref lets that one navigation
+  re-renders, while `dirty` is still true, so `allowLeaving` lets that one navigation
   through.
 
 ---
@@ -304,12 +348,16 @@ the error banner, one line per `details` entry, not mapped back onto the canvas.
 |---|---|
 | `lib/icons.tsx` | non-entity glyphs |
 | `components/settings/SettingsCard.tsx` + css | §3.2 |
+| `components/settings/SettingsSection.tsx` + css | §3.3 |
 | `components/ui/ConfirmDialog.tsx` + css | §3.3, exported from `components/ui` |
 | `components/Sidebar.tsx`, `globals.css` | Settings link, `.sidebar-footer`, `.page-intro`, `.settings-grid`, `.visually-hidden`, warning colour tokens |
 | `components/entity/RecordForm.tsx` | sections keyed by index: two sections may share a label |
 | `lib/entity/useEntitySchema.ts` | also exports `entitySchemaQuery(type)`, the query options |
 | `features/settings/SettingsPage.tsx` | overview and its `SECTIONS` |
-| `features/settings/layouts/LayoutSettingsPage.tsx`, `LayoutGroup.tsx` | list page |
+| `features/settings/paths.ts` | the settings area's URLs |
+| `features/settings/entity/EntitySettingsPage.tsx` | §5 |
+| `features/settings/layouts/LayoutsSection.tsx` | §5 |
+| `features/settings/roles/*`, `features/settings/users/*` | §11 |
 | `features/settings/layouts/layouts.module.css` | styles shared by list and editor |
 | `features/settings/layouts/paths.ts` | the layout pages' URLs; reading the `/new` query |
 | `features/settings/layouts/editor/LayoutEditor.tsx` | the editor: the reducer, save, guard; `EditorMessage` |
@@ -317,24 +365,27 @@ the error banner, one line per `details` entry, not mapped back onto the canvas.
 | `features/settings/layouts/editor/EditorSection.tsx`, `FieldChip.tsx`, `FieldPalette.tsx` | canvas and palette |
 | `features/settings/layouts/editor/LayoutDndContext.tsx`, `dndIds.ts` | drag-and-drop (§6.4) |
 | `lib/layouts/*` | §4 |
+| `lib/useUnsavedChangesGuard.ts` | §3.4 |
 
 ---
 
 ## 8. Permissions (later)
 
-Everything here is an admin function. When roles land (login exists; roles don't): the sidebar hides Settings for
-non-admins, `/settings/**` routes redirect, and — the real guard — every
-`/api/entity-layouts` endpoint requires the admin role. The schema bundle stays open to
-every signed-in user.
+Everything here is an admin function. Roles exist and nothing obeys them yet
+(`roles-and-permissions.md`), and the Roles page says so. When enforcement ships, the
+sidebar shows Settings to a caller holding any app permission, routes redirect the rest,
+and — the real guard — writes on `/api/entity-layouts` require `manage_layouts`. The schema
+bundle stays open to every signed-in user.
 
 ---
 
 ## 9. Tests
 
-None yet; the area was verified by hand in the browser (pointer and keyboard drags,
-validation, save, the unsaved-changes guard, set default, delete; creating from blank and
-from a copy, Back after creating, bad `/new` links, a refused create). When tests are picked
-up, `layoutDraft` is the place to start (Vitest, pure): `reconcile` drops unknown keys
+`paths.test.ts` and `layouts/paths.test.ts` cover the URLs, `lib/roles/roleDraft.test.ts` the
+role editor's model. The rest was verified by hand in the browser (pointer and keyboard
+drags, validation, save, the unsaved-changes guard, set default, delete; creating from blank
+and from a copy, Back after creating, bad `/new` links, a refused create). When more tests
+are picked up, `layoutDraft` is the place to start (Vitest, pure): `reconcile` drops unknown keys
 and fixes case; `blankDraft` holds the required fields; each reducer action,
 including its refusals and `placeField` moving an already-placed field.
 
@@ -356,10 +407,32 @@ Considered and left out for simplicity, so they aren't proposed again without a 
 | Optimistic locking | records are last-write-wins too; one admin, no auth |
 | A new-layout dialog (name and source first) | the editor names the layout itself, and a dialog would still store it before editing |
 | Draft layouts on the server, or a draft kept in browser storage | an unsaved layout is a page, like an unsaved record form |
-| Get-by-id, a summary DTO, a per-entity list | one list of full trees serves both pages |
+| Get-by-id, a summary DTO | the entity's list of full trees serves both the section and the editor |
+| `/settings/crm/contacts` URLs, redirects from the old `/settings/layouts/*` | CRM isn't a page; dev phase, no bookmarks |
+| A page per entity, a section registry, a breadcrumb trail | `ENTITIES` says all that differs; a list of components is clearer; two levels deep |
+| Expand all / collapse all, collapsed state on the server | a handful of sections; it's a per-viewer convenience |
+| Settings search, a settings side-nav | still few pages; revisit when the overview grows |
 | A layout-specific error code; mapping server errors onto the canvas | the editor checks the rules first; a 400 is rare and a banner suffices |
 | Unique labels, no empty sections | they protect nothing; empty sections are already hidden |
 | A preview of the record page | the canvas already uses the record page's grid |
 | Section ↑/↓ buttons, drag-to-palette removal, set-default in the editor | each duplicated another control |
 | Palette search, marking custom fields | fields per entity are few; standard and custom are one list |
 | `SegmentedControl`, `IconButton`, `Badge` primitives | `Select`, `Button` and a CSS class do the job |
+
+---
+
+## 11. Roles and Users pages
+
+The **General** section. Designed in `roles-and-permissions.md` §5, which is the reference
+for these pages; this is where they sit in the area.
+
+| Page | Route | Notes |
+|---|---|---|
+| `features/settings/roles/RolesPage.tsx` | `/settings/roles` | `.list-table`; the intro says roles aren't enforced yet |
+| `features/settings/roles/RoleEditorPage.tsx`, `NewRolePage.tsx` | `/settings/roles/:id`, `/new[?from=<id>]` | what the draft starts from and how Save stores it, as §6.1. Administrator has no matrix |
+| `features/settings/roles/RoleEditor.tsx` | | one reducer over `lib/roles/roleDraft.ts`, whole-document save, the shared guard: the layout editor's pattern without the drag-and-drop |
+| `features/settings/users/UsersPage.tsx` | `/settings/users` | joins users, assignments and roles on the page |
+| `features/settings/users/UserPage.tsx` | `/settings/users/:id` | General saves explicitly; Roles apply at once |
+
+The role editor takes its header from `layouts.module.css`, and adds `roles.module.css`
+for the matrix.

@@ -890,6 +890,574 @@ create policy tenant_isolation on app.entity_layout_section_fields
 grant select, insert, update, delete on app.entity_layout_section_fields to blusimian_app;
 
 -- --------------------------------------------------------------------------
+-- app.roles  (the "mother" row of a role)
+--   A named set of permissions, per tenant. Every role has exactly one row in
+--   each of the four tables below, created in the role's transaction, and every
+--   permission starts false. is_admin is set only by provisioning.
+-- --------------------------------------------------------------------------
+create table app.roles
+(
+    id         uuid         not null default gen_random_uuid(),
+    tenant_id  uuid         not null default app.current_tenant_id()
+        references app.tenants (id),
+    name       varchar(100) collate app.case_insensitive not null,
+    is_admin   boolean      not null default false,
+    created_at timestamptz  not null default now(),
+    updated_at timestamptz  not null default now(),
+
+    constraint pk_roles primary key (tenant_id, id),
+    constraint uq_roles_name unique (tenant_id, name)
+);
+
+-- at most one Administrator per tenant
+create unique index uq_roles_admin on app.roles (tenant_id) where is_admin;
+
+alter table app.roles enable row level security;
+
+create policy tenant_isolation on app.roles
+    to blusimian_app
+    using (tenant_id = (select app.current_tenant_id()))
+    with check (tenant_id = (select app.current_tenant_id()));
+
+grant select, insert, update, delete on app.roles to blusimian_app;
+
+-- --------------------------------------------------------------------------
+-- app.role_assignments  (a user holds a role)
+--   The two delete rules differ on purpose: a deleted user's assignments mean
+--   nothing, a deleted role would silently strip access from every holder.
+-- --------------------------------------------------------------------------
+create table app.role_assignments
+(
+    id         uuid        not null default gen_random_uuid(),
+    tenant_id  uuid        not null default app.current_tenant_id()
+        references app.tenants (id),
+    user_id    uuid        not null,
+    role_id    uuid        not null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+
+    constraint pk_role_assignments primary key (tenant_id, id),
+    -- Its leading (tenant_id, user_id) also serves "this user's roles".
+    constraint uq_role_assignments unique (tenant_id, user_id, role_id),
+    constraint fk_role_assignments_user_id foreign key (tenant_id, user_id)
+        references app.users (tenant_id, id) on delete cascade,
+    constraint fk_role_assignments_role_id foreign key (tenant_id, role_id)
+        references app.roles (tenant_id, id) on delete restrict
+);
+
+create index idx_role_assignments_role on app.role_assignments (tenant_id, role_id);
+
+alter table app.role_assignments enable row level security;
+
+create policy tenant_isolation on app.role_assignments
+    to blusimian_app
+    using (tenant_id = (select app.current_tenant_id()))
+    with check (tenant_id = (select app.current_tenant_id()));
+
+grant select, insert, update, delete on app.role_assignments to blusimian_app;
+
+-- --------------------------------------------------------------------------
+-- app.app_permissions  (one row per role: what isn't about an entity)
+-- --------------------------------------------------------------------------
+create table app.app_permissions
+(
+    id                   uuid        not null default gen_random_uuid(),
+    tenant_id            uuid        not null default app.current_tenant_id()
+        references app.tenants (id),
+    role_id              uuid        not null,
+
+    manage_users         boolean     not null default false,
+    manage_roles         boolean     not null default false,
+    manage_job_titles    boolean     not null default false,
+    manage_layouts       boolean     not null default false,
+    manage_custom_fields boolean     not null default false,
+
+    created_at           timestamptz not null default now(),
+    updated_at           timestamptz not null default now(),
+
+    constraint pk_app_permissions primary key (tenant_id, id),
+    constraint uq_app_permissions_role unique (tenant_id, role_id),
+    constraint fk_app_permissions_role_id foreign key (tenant_id, role_id)
+        references app.roles (tenant_id, id) on delete cascade
+);
+
+alter table app.app_permissions enable row level security;
+
+create policy tenant_isolation on app.app_permissions
+    to blusimian_app
+    using (tenant_id = (select app.current_tenant_id()))
+    with check (tenant_id = (select app.current_tenant_id()));
+
+grant select, insert, update, delete on app.app_permissions to blusimian_app;
+
+
+-- --------------------------------------------------------------------------
+-- app.contact_permissions
+--   One row per role. can_* says what the role may do with the entity's records;
+--   each field then has a read and an edit bit. A cf_* pair is meaningless until
+--   app.custom_field_definitions gives the slot to a field, as on the record
+--   tables. Only JdbcClient reaches these columns, by name: PermissionColumnsVerifier
+--   compares them to the fields at startup, since Hibernate doesn't map them.
+-- --------------------------------------------------------------------------
+create table app.contact_permissions
+(
+    id         uuid        not null default gen_random_uuid(),
+    tenant_id  uuid        not null default app.current_tenant_id()
+        references app.tenants (id),
+    role_id    uuid        not null,
+
+    can_read   boolean     not null default false,
+    can_create boolean     not null default false,
+    can_edit   boolean     not null default false,
+    can_delete boolean     not null default false,
+
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+
+    -- One pair per field in the dictionary: standard by key, custom by slot.
+    salutation_read boolean not null default false, salutation_edit boolean not null default false,
+    first_name_read boolean not null default false, first_name_edit boolean not null default false,
+    last_name_read boolean not null default false, last_name_edit boolean not null default false,
+    email_read boolean not null default false, email_edit boolean not null default false,
+    phone_read boolean not null default false, phone_edit boolean not null default false,
+    street_read boolean not null default false, street_edit boolean not null default false,
+    city_read boolean not null default false, city_edit boolean not null default false,
+    state_read boolean not null default false, state_edit boolean not null default false,
+    postal_code_read boolean not null default false, postal_code_edit boolean not null default false,
+    country_code_read boolean not null default false, country_code_edit boolean not null default false,
+    cf_text_01_read boolean not null default false, cf_text_01_edit boolean not null default false,
+    cf_text_02_read boolean not null default false, cf_text_02_edit boolean not null default false,
+    cf_text_03_read boolean not null default false, cf_text_03_edit boolean not null default false,
+    cf_text_04_read boolean not null default false, cf_text_04_edit boolean not null default false,
+    cf_text_05_read boolean not null default false, cf_text_05_edit boolean not null default false,
+    cf_text_06_read boolean not null default false, cf_text_06_edit boolean not null default false,
+    cf_text_07_read boolean not null default false, cf_text_07_edit boolean not null default false,
+    cf_text_08_read boolean not null default false, cf_text_08_edit boolean not null default false,
+    cf_text_09_read boolean not null default false, cf_text_09_edit boolean not null default false,
+    cf_text_10_read boolean not null default false, cf_text_10_edit boolean not null default false,
+    cf_text_11_read boolean not null default false, cf_text_11_edit boolean not null default false,
+    cf_text_12_read boolean not null default false, cf_text_12_edit boolean not null default false,
+    cf_text_13_read boolean not null default false, cf_text_13_edit boolean not null default false,
+    cf_text_14_read boolean not null default false, cf_text_14_edit boolean not null default false,
+    cf_text_15_read boolean not null default false, cf_text_15_edit boolean not null default false,
+    cf_text_16_read boolean not null default false, cf_text_16_edit boolean not null default false,
+    cf_text_17_read boolean not null default false, cf_text_17_edit boolean not null default false,
+    cf_text_18_read boolean not null default false, cf_text_18_edit boolean not null default false,
+    cf_text_19_read boolean not null default false, cf_text_19_edit boolean not null default false,
+    cf_text_20_read boolean not null default false, cf_text_20_edit boolean not null default false,
+    cf_text_21_read boolean not null default false, cf_text_21_edit boolean not null default false,
+    cf_text_22_read boolean not null default false, cf_text_22_edit boolean not null default false,
+    cf_text_23_read boolean not null default false, cf_text_23_edit boolean not null default false,
+    cf_text_24_read boolean not null default false, cf_text_24_edit boolean not null default false,
+    cf_text_25_read boolean not null default false, cf_text_25_edit boolean not null default false,
+    cf_text_26_read boolean not null default false, cf_text_26_edit boolean not null default false,
+    cf_text_27_read boolean not null default false, cf_text_27_edit boolean not null default false,
+    cf_text_28_read boolean not null default false, cf_text_28_edit boolean not null default false,
+    cf_text_29_read boolean not null default false, cf_text_29_edit boolean not null default false,
+    cf_text_30_read boolean not null default false, cf_text_30_edit boolean not null default false,
+    cf_text_31_read boolean not null default false, cf_text_31_edit boolean not null default false,
+    cf_text_32_read boolean not null default false, cf_text_32_edit boolean not null default false,
+    cf_text_33_read boolean not null default false, cf_text_33_edit boolean not null default false,
+    cf_text_34_read boolean not null default false, cf_text_34_edit boolean not null default false,
+    cf_text_35_read boolean not null default false, cf_text_35_edit boolean not null default false,
+    cf_text_36_read boolean not null default false, cf_text_36_edit boolean not null default false,
+    cf_text_37_read boolean not null default false, cf_text_37_edit boolean not null default false,
+    cf_text_38_read boolean not null default false, cf_text_38_edit boolean not null default false,
+    cf_text_39_read boolean not null default false, cf_text_39_edit boolean not null default false,
+    cf_text_40_read boolean not null default false, cf_text_40_edit boolean not null default false,
+    cf_num_01_read boolean not null default false, cf_num_01_edit boolean not null default false,
+    cf_num_02_read boolean not null default false, cf_num_02_edit boolean not null default false,
+    cf_num_03_read boolean not null default false, cf_num_03_edit boolean not null default false,
+    cf_num_04_read boolean not null default false, cf_num_04_edit boolean not null default false,
+    cf_num_05_read boolean not null default false, cf_num_05_edit boolean not null default false,
+    cf_num_06_read boolean not null default false, cf_num_06_edit boolean not null default false,
+    cf_num_07_read boolean not null default false, cf_num_07_edit boolean not null default false,
+    cf_num_08_read boolean not null default false, cf_num_08_edit boolean not null default false,
+    cf_num_09_read boolean not null default false, cf_num_09_edit boolean not null default false,
+    cf_num_10_read boolean not null default false, cf_num_10_edit boolean not null default false,
+    cf_num_11_read boolean not null default false, cf_num_11_edit boolean not null default false,
+    cf_num_12_read boolean not null default false, cf_num_12_edit boolean not null default false,
+    cf_num_13_read boolean not null default false, cf_num_13_edit boolean not null default false,
+    cf_num_14_read boolean not null default false, cf_num_14_edit boolean not null default false,
+    cf_num_15_read boolean not null default false, cf_num_15_edit boolean not null default false,
+    cf_num_16_read boolean not null default false, cf_num_16_edit boolean not null default false,
+    cf_num_17_read boolean not null default false, cf_num_17_edit boolean not null default false,
+    cf_num_18_read boolean not null default false, cf_num_18_edit boolean not null default false,
+    cf_num_19_read boolean not null default false, cf_num_19_edit boolean not null default false,
+    cf_num_20_read boolean not null default false, cf_num_20_edit boolean not null default false,
+    cf_num_21_read boolean not null default false, cf_num_21_edit boolean not null default false,
+    cf_num_22_read boolean not null default false, cf_num_22_edit boolean not null default false,
+    cf_num_23_read boolean not null default false, cf_num_23_edit boolean not null default false,
+    cf_num_24_read boolean not null default false, cf_num_24_edit boolean not null default false,
+    cf_num_25_read boolean not null default false, cf_num_25_edit boolean not null default false,
+    cf_bool_01_read boolean not null default false, cf_bool_01_edit boolean not null default false,
+    cf_bool_02_read boolean not null default false, cf_bool_02_edit boolean not null default false,
+    cf_bool_03_read boolean not null default false, cf_bool_03_edit boolean not null default false,
+    cf_bool_04_read boolean not null default false, cf_bool_04_edit boolean not null default false,
+    cf_bool_05_read boolean not null default false, cf_bool_05_edit boolean not null default false,
+    cf_bool_06_read boolean not null default false, cf_bool_06_edit boolean not null default false,
+    cf_bool_07_read boolean not null default false, cf_bool_07_edit boolean not null default false,
+    cf_bool_08_read boolean not null default false, cf_bool_08_edit boolean not null default false,
+    cf_bool_09_read boolean not null default false, cf_bool_09_edit boolean not null default false,
+    cf_bool_10_read boolean not null default false, cf_bool_10_edit boolean not null default false,
+    cf_bool_11_read boolean not null default false, cf_bool_11_edit boolean not null default false,
+    cf_bool_12_read boolean not null default false, cf_bool_12_edit boolean not null default false,
+    cf_bool_13_read boolean not null default false, cf_bool_13_edit boolean not null default false,
+    cf_bool_14_read boolean not null default false, cf_bool_14_edit boolean not null default false,
+    cf_bool_15_read boolean not null default false, cf_bool_15_edit boolean not null default false,
+    cf_bool_16_read boolean not null default false, cf_bool_16_edit boolean not null default false,
+    cf_bool_17_read boolean not null default false, cf_bool_17_edit boolean not null default false,
+    cf_bool_18_read boolean not null default false, cf_bool_18_edit boolean not null default false,
+    cf_bool_19_read boolean not null default false, cf_bool_19_edit boolean not null default false,
+    cf_bool_20_read boolean not null default false, cf_bool_20_edit boolean not null default false,
+    cf_bool_21_read boolean not null default false, cf_bool_21_edit boolean not null default false,
+    cf_bool_22_read boolean not null default false, cf_bool_22_edit boolean not null default false,
+    cf_bool_23_read boolean not null default false, cf_bool_23_edit boolean not null default false,
+    cf_bool_24_read boolean not null default false, cf_bool_24_edit boolean not null default false,
+    cf_bool_25_read boolean not null default false, cf_bool_25_edit boolean not null default false,
+    cf_date_01_read boolean not null default false, cf_date_01_edit boolean not null default false,
+    cf_date_02_read boolean not null default false, cf_date_02_edit boolean not null default false,
+    cf_date_03_read boolean not null default false, cf_date_03_edit boolean not null default false,
+    cf_date_04_read boolean not null default false, cf_date_04_edit boolean not null default false,
+    cf_date_05_read boolean not null default false, cf_date_05_edit boolean not null default false,
+    cf_date_06_read boolean not null default false, cf_date_06_edit boolean not null default false,
+    cf_date_07_read boolean not null default false, cf_date_07_edit boolean not null default false,
+    cf_date_08_read boolean not null default false, cf_date_08_edit boolean not null default false,
+    cf_date_09_read boolean not null default false, cf_date_09_edit boolean not null default false,
+    cf_date_10_read boolean not null default false, cf_date_10_edit boolean not null default false,
+    cf_longtext_01_read boolean not null default false, cf_longtext_01_edit boolean not null default false,
+    cf_longtext_02_read boolean not null default false, cf_longtext_02_edit boolean not null default false,
+    cf_longtext_03_read boolean not null default false, cf_longtext_03_edit boolean not null default false,
+    cf_longtext_04_read boolean not null default false, cf_longtext_04_edit boolean not null default false,
+    cf_longtext_05_read boolean not null default false, cf_longtext_05_edit boolean not null default false,
+
+    constraint pk_contact_permissions primary key (tenant_id, id),
+    constraint uq_contact_permissions_role unique (tenant_id, role_id),
+    constraint fk_contact_permissions_role_id foreign key (tenant_id, role_id)
+        references app.roles (tenant_id, id) on delete cascade,
+    constraint ck_contact_permissions_crud
+        check (can_read or not (can_create or can_edit or can_delete)),
+    -- The provider's required fields.
+    constraint ck_contact_permissions_required
+        check (not can_create or (first_name_read and first_name_edit
+                                  and last_name_read and last_name_edit))
+);
+
+alter table app.contact_permissions enable row level security;
+
+create policy tenant_isolation on app.contact_permissions
+    to blusimian_app
+    using (tenant_id = (select app.current_tenant_id()))
+    with check (tenant_id = (select app.current_tenant_id()));
+
+grant select, insert, update, delete on app.contact_permissions to blusimian_app;
+
+-- --------------------------------------------------------------------------
+-- app.company_permissions
+--   Same shape as app.contact_permissions; keep the three in step.
+-- --------------------------------------------------------------------------
+create table app.company_permissions
+(
+    id         uuid        not null default gen_random_uuid(),
+    tenant_id  uuid        not null default app.current_tenant_id()
+        references app.tenants (id),
+    role_id    uuid        not null,
+
+    can_read   boolean     not null default false,
+    can_create boolean     not null default false,
+    can_edit   boolean     not null default false,
+    can_delete boolean     not null default false,
+
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+
+    -- One pair per field in the dictionary: standard by key, custom by slot.
+    name_read boolean not null default false, name_edit boolean not null default false,
+    legal_name_read boolean not null default false, legal_name_edit boolean not null default false,
+    type_read boolean not null default false, type_edit boolean not null default false,
+    industry_read boolean not null default false, industry_edit boolean not null default false,
+    description_read boolean not null default false, description_edit boolean not null default false,
+    employee_range_read boolean not null default false, employee_range_edit boolean not null default false,
+    website_read boolean not null default false, website_edit boolean not null default false,
+    phone_read boolean not null default false, phone_edit boolean not null default false,
+    phone_alt_read boolean not null default false, phone_alt_edit boolean not null default false,
+    vat_number_read boolean not null default false, vat_number_edit boolean not null default false,
+    cf_text_01_read boolean not null default false, cf_text_01_edit boolean not null default false,
+    cf_text_02_read boolean not null default false, cf_text_02_edit boolean not null default false,
+    cf_text_03_read boolean not null default false, cf_text_03_edit boolean not null default false,
+    cf_text_04_read boolean not null default false, cf_text_04_edit boolean not null default false,
+    cf_text_05_read boolean not null default false, cf_text_05_edit boolean not null default false,
+    cf_text_06_read boolean not null default false, cf_text_06_edit boolean not null default false,
+    cf_text_07_read boolean not null default false, cf_text_07_edit boolean not null default false,
+    cf_text_08_read boolean not null default false, cf_text_08_edit boolean not null default false,
+    cf_text_09_read boolean not null default false, cf_text_09_edit boolean not null default false,
+    cf_text_10_read boolean not null default false, cf_text_10_edit boolean not null default false,
+    cf_text_11_read boolean not null default false, cf_text_11_edit boolean not null default false,
+    cf_text_12_read boolean not null default false, cf_text_12_edit boolean not null default false,
+    cf_text_13_read boolean not null default false, cf_text_13_edit boolean not null default false,
+    cf_text_14_read boolean not null default false, cf_text_14_edit boolean not null default false,
+    cf_text_15_read boolean not null default false, cf_text_15_edit boolean not null default false,
+    cf_text_16_read boolean not null default false, cf_text_16_edit boolean not null default false,
+    cf_text_17_read boolean not null default false, cf_text_17_edit boolean not null default false,
+    cf_text_18_read boolean not null default false, cf_text_18_edit boolean not null default false,
+    cf_text_19_read boolean not null default false, cf_text_19_edit boolean not null default false,
+    cf_text_20_read boolean not null default false, cf_text_20_edit boolean not null default false,
+    cf_text_21_read boolean not null default false, cf_text_21_edit boolean not null default false,
+    cf_text_22_read boolean not null default false, cf_text_22_edit boolean not null default false,
+    cf_text_23_read boolean not null default false, cf_text_23_edit boolean not null default false,
+    cf_text_24_read boolean not null default false, cf_text_24_edit boolean not null default false,
+    cf_text_25_read boolean not null default false, cf_text_25_edit boolean not null default false,
+    cf_text_26_read boolean not null default false, cf_text_26_edit boolean not null default false,
+    cf_text_27_read boolean not null default false, cf_text_27_edit boolean not null default false,
+    cf_text_28_read boolean not null default false, cf_text_28_edit boolean not null default false,
+    cf_text_29_read boolean not null default false, cf_text_29_edit boolean not null default false,
+    cf_text_30_read boolean not null default false, cf_text_30_edit boolean not null default false,
+    cf_text_31_read boolean not null default false, cf_text_31_edit boolean not null default false,
+    cf_text_32_read boolean not null default false, cf_text_32_edit boolean not null default false,
+    cf_text_33_read boolean not null default false, cf_text_33_edit boolean not null default false,
+    cf_text_34_read boolean not null default false, cf_text_34_edit boolean not null default false,
+    cf_text_35_read boolean not null default false, cf_text_35_edit boolean not null default false,
+    cf_text_36_read boolean not null default false, cf_text_36_edit boolean not null default false,
+    cf_text_37_read boolean not null default false, cf_text_37_edit boolean not null default false,
+    cf_text_38_read boolean not null default false, cf_text_38_edit boolean not null default false,
+    cf_text_39_read boolean not null default false, cf_text_39_edit boolean not null default false,
+    cf_text_40_read boolean not null default false, cf_text_40_edit boolean not null default false,
+    cf_num_01_read boolean not null default false, cf_num_01_edit boolean not null default false,
+    cf_num_02_read boolean not null default false, cf_num_02_edit boolean not null default false,
+    cf_num_03_read boolean not null default false, cf_num_03_edit boolean not null default false,
+    cf_num_04_read boolean not null default false, cf_num_04_edit boolean not null default false,
+    cf_num_05_read boolean not null default false, cf_num_05_edit boolean not null default false,
+    cf_num_06_read boolean not null default false, cf_num_06_edit boolean not null default false,
+    cf_num_07_read boolean not null default false, cf_num_07_edit boolean not null default false,
+    cf_num_08_read boolean not null default false, cf_num_08_edit boolean not null default false,
+    cf_num_09_read boolean not null default false, cf_num_09_edit boolean not null default false,
+    cf_num_10_read boolean not null default false, cf_num_10_edit boolean not null default false,
+    cf_num_11_read boolean not null default false, cf_num_11_edit boolean not null default false,
+    cf_num_12_read boolean not null default false, cf_num_12_edit boolean not null default false,
+    cf_num_13_read boolean not null default false, cf_num_13_edit boolean not null default false,
+    cf_num_14_read boolean not null default false, cf_num_14_edit boolean not null default false,
+    cf_num_15_read boolean not null default false, cf_num_15_edit boolean not null default false,
+    cf_num_16_read boolean not null default false, cf_num_16_edit boolean not null default false,
+    cf_num_17_read boolean not null default false, cf_num_17_edit boolean not null default false,
+    cf_num_18_read boolean not null default false, cf_num_18_edit boolean not null default false,
+    cf_num_19_read boolean not null default false, cf_num_19_edit boolean not null default false,
+    cf_num_20_read boolean not null default false, cf_num_20_edit boolean not null default false,
+    cf_num_21_read boolean not null default false, cf_num_21_edit boolean not null default false,
+    cf_num_22_read boolean not null default false, cf_num_22_edit boolean not null default false,
+    cf_num_23_read boolean not null default false, cf_num_23_edit boolean not null default false,
+    cf_num_24_read boolean not null default false, cf_num_24_edit boolean not null default false,
+    cf_num_25_read boolean not null default false, cf_num_25_edit boolean not null default false,
+    cf_bool_01_read boolean not null default false, cf_bool_01_edit boolean not null default false,
+    cf_bool_02_read boolean not null default false, cf_bool_02_edit boolean not null default false,
+    cf_bool_03_read boolean not null default false, cf_bool_03_edit boolean not null default false,
+    cf_bool_04_read boolean not null default false, cf_bool_04_edit boolean not null default false,
+    cf_bool_05_read boolean not null default false, cf_bool_05_edit boolean not null default false,
+    cf_bool_06_read boolean not null default false, cf_bool_06_edit boolean not null default false,
+    cf_bool_07_read boolean not null default false, cf_bool_07_edit boolean not null default false,
+    cf_bool_08_read boolean not null default false, cf_bool_08_edit boolean not null default false,
+    cf_bool_09_read boolean not null default false, cf_bool_09_edit boolean not null default false,
+    cf_bool_10_read boolean not null default false, cf_bool_10_edit boolean not null default false,
+    cf_bool_11_read boolean not null default false, cf_bool_11_edit boolean not null default false,
+    cf_bool_12_read boolean not null default false, cf_bool_12_edit boolean not null default false,
+    cf_bool_13_read boolean not null default false, cf_bool_13_edit boolean not null default false,
+    cf_bool_14_read boolean not null default false, cf_bool_14_edit boolean not null default false,
+    cf_bool_15_read boolean not null default false, cf_bool_15_edit boolean not null default false,
+    cf_bool_16_read boolean not null default false, cf_bool_16_edit boolean not null default false,
+    cf_bool_17_read boolean not null default false, cf_bool_17_edit boolean not null default false,
+    cf_bool_18_read boolean not null default false, cf_bool_18_edit boolean not null default false,
+    cf_bool_19_read boolean not null default false, cf_bool_19_edit boolean not null default false,
+    cf_bool_20_read boolean not null default false, cf_bool_20_edit boolean not null default false,
+    cf_bool_21_read boolean not null default false, cf_bool_21_edit boolean not null default false,
+    cf_bool_22_read boolean not null default false, cf_bool_22_edit boolean not null default false,
+    cf_bool_23_read boolean not null default false, cf_bool_23_edit boolean not null default false,
+    cf_bool_24_read boolean not null default false, cf_bool_24_edit boolean not null default false,
+    cf_bool_25_read boolean not null default false, cf_bool_25_edit boolean not null default false,
+    cf_date_01_read boolean not null default false, cf_date_01_edit boolean not null default false,
+    cf_date_02_read boolean not null default false, cf_date_02_edit boolean not null default false,
+    cf_date_03_read boolean not null default false, cf_date_03_edit boolean not null default false,
+    cf_date_04_read boolean not null default false, cf_date_04_edit boolean not null default false,
+    cf_date_05_read boolean not null default false, cf_date_05_edit boolean not null default false,
+    cf_date_06_read boolean not null default false, cf_date_06_edit boolean not null default false,
+    cf_date_07_read boolean not null default false, cf_date_07_edit boolean not null default false,
+    cf_date_08_read boolean not null default false, cf_date_08_edit boolean not null default false,
+    cf_date_09_read boolean not null default false, cf_date_09_edit boolean not null default false,
+    cf_date_10_read boolean not null default false, cf_date_10_edit boolean not null default false,
+    cf_longtext_01_read boolean not null default false, cf_longtext_01_edit boolean not null default false,
+    cf_longtext_02_read boolean not null default false, cf_longtext_02_edit boolean not null default false,
+    cf_longtext_03_read boolean not null default false, cf_longtext_03_edit boolean not null default false,
+    cf_longtext_04_read boolean not null default false, cf_longtext_04_edit boolean not null default false,
+    cf_longtext_05_read boolean not null default false, cf_longtext_05_edit boolean not null default false,
+
+    constraint pk_company_permissions primary key (tenant_id, id),
+    constraint uq_company_permissions_role unique (tenant_id, role_id),
+    constraint fk_company_permissions_role_id foreign key (tenant_id, role_id)
+        references app.roles (tenant_id, id) on delete cascade,
+    constraint ck_company_permissions_crud
+        check (can_read or not (can_create or can_edit or can_delete)),
+    -- The provider's required fields.
+    constraint ck_company_permissions_required
+        check (not can_create or (name_read and name_edit))
+);
+
+alter table app.company_permissions enable row level security;
+
+create policy tenant_isolation on app.company_permissions
+    to blusimian_app
+    using (tenant_id = (select app.current_tenant_id()))
+    with check (tenant_id = (select app.current_tenant_id()));
+
+grant select, insert, update, delete on app.company_permissions to blusimian_app;
+
+-- --------------------------------------------------------------------------
+-- app.deal_permissions
+--   Same shape as app.contact_permissions; keep the three in step.
+-- --------------------------------------------------------------------------
+create table app.deal_permissions
+(
+    id         uuid        not null default gen_random_uuid(),
+    tenant_id  uuid        not null default app.current_tenant_id()
+        references app.tenants (id),
+    role_id    uuid        not null,
+
+    can_read   boolean     not null default false,
+    can_create boolean     not null default false,
+    can_edit   boolean     not null default false,
+    can_delete boolean     not null default false,
+
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+
+    -- One pair per field in the dictionary: standard by key, custom by slot.
+    deal_name_read boolean not null default false, deal_name_edit boolean not null default false,
+    amount_read boolean not null default false, amount_edit boolean not null default false,
+    customer_id_read boolean not null default false, customer_id_edit boolean not null default false,
+    cf_text_01_read boolean not null default false, cf_text_01_edit boolean not null default false,
+    cf_text_02_read boolean not null default false, cf_text_02_edit boolean not null default false,
+    cf_text_03_read boolean not null default false, cf_text_03_edit boolean not null default false,
+    cf_text_04_read boolean not null default false, cf_text_04_edit boolean not null default false,
+    cf_text_05_read boolean not null default false, cf_text_05_edit boolean not null default false,
+    cf_text_06_read boolean not null default false, cf_text_06_edit boolean not null default false,
+    cf_text_07_read boolean not null default false, cf_text_07_edit boolean not null default false,
+    cf_text_08_read boolean not null default false, cf_text_08_edit boolean not null default false,
+    cf_text_09_read boolean not null default false, cf_text_09_edit boolean not null default false,
+    cf_text_10_read boolean not null default false, cf_text_10_edit boolean not null default false,
+    cf_text_11_read boolean not null default false, cf_text_11_edit boolean not null default false,
+    cf_text_12_read boolean not null default false, cf_text_12_edit boolean not null default false,
+    cf_text_13_read boolean not null default false, cf_text_13_edit boolean not null default false,
+    cf_text_14_read boolean not null default false, cf_text_14_edit boolean not null default false,
+    cf_text_15_read boolean not null default false, cf_text_15_edit boolean not null default false,
+    cf_text_16_read boolean not null default false, cf_text_16_edit boolean not null default false,
+    cf_text_17_read boolean not null default false, cf_text_17_edit boolean not null default false,
+    cf_text_18_read boolean not null default false, cf_text_18_edit boolean not null default false,
+    cf_text_19_read boolean not null default false, cf_text_19_edit boolean not null default false,
+    cf_text_20_read boolean not null default false, cf_text_20_edit boolean not null default false,
+    cf_text_21_read boolean not null default false, cf_text_21_edit boolean not null default false,
+    cf_text_22_read boolean not null default false, cf_text_22_edit boolean not null default false,
+    cf_text_23_read boolean not null default false, cf_text_23_edit boolean not null default false,
+    cf_text_24_read boolean not null default false, cf_text_24_edit boolean not null default false,
+    cf_text_25_read boolean not null default false, cf_text_25_edit boolean not null default false,
+    cf_text_26_read boolean not null default false, cf_text_26_edit boolean not null default false,
+    cf_text_27_read boolean not null default false, cf_text_27_edit boolean not null default false,
+    cf_text_28_read boolean not null default false, cf_text_28_edit boolean not null default false,
+    cf_text_29_read boolean not null default false, cf_text_29_edit boolean not null default false,
+    cf_text_30_read boolean not null default false, cf_text_30_edit boolean not null default false,
+    cf_text_31_read boolean not null default false, cf_text_31_edit boolean not null default false,
+    cf_text_32_read boolean not null default false, cf_text_32_edit boolean not null default false,
+    cf_text_33_read boolean not null default false, cf_text_33_edit boolean not null default false,
+    cf_text_34_read boolean not null default false, cf_text_34_edit boolean not null default false,
+    cf_text_35_read boolean not null default false, cf_text_35_edit boolean not null default false,
+    cf_text_36_read boolean not null default false, cf_text_36_edit boolean not null default false,
+    cf_text_37_read boolean not null default false, cf_text_37_edit boolean not null default false,
+    cf_text_38_read boolean not null default false, cf_text_38_edit boolean not null default false,
+    cf_text_39_read boolean not null default false, cf_text_39_edit boolean not null default false,
+    cf_text_40_read boolean not null default false, cf_text_40_edit boolean not null default false,
+    cf_num_01_read boolean not null default false, cf_num_01_edit boolean not null default false,
+    cf_num_02_read boolean not null default false, cf_num_02_edit boolean not null default false,
+    cf_num_03_read boolean not null default false, cf_num_03_edit boolean not null default false,
+    cf_num_04_read boolean not null default false, cf_num_04_edit boolean not null default false,
+    cf_num_05_read boolean not null default false, cf_num_05_edit boolean not null default false,
+    cf_num_06_read boolean not null default false, cf_num_06_edit boolean not null default false,
+    cf_num_07_read boolean not null default false, cf_num_07_edit boolean not null default false,
+    cf_num_08_read boolean not null default false, cf_num_08_edit boolean not null default false,
+    cf_num_09_read boolean not null default false, cf_num_09_edit boolean not null default false,
+    cf_num_10_read boolean not null default false, cf_num_10_edit boolean not null default false,
+    cf_num_11_read boolean not null default false, cf_num_11_edit boolean not null default false,
+    cf_num_12_read boolean not null default false, cf_num_12_edit boolean not null default false,
+    cf_num_13_read boolean not null default false, cf_num_13_edit boolean not null default false,
+    cf_num_14_read boolean not null default false, cf_num_14_edit boolean not null default false,
+    cf_num_15_read boolean not null default false, cf_num_15_edit boolean not null default false,
+    cf_num_16_read boolean not null default false, cf_num_16_edit boolean not null default false,
+    cf_num_17_read boolean not null default false, cf_num_17_edit boolean not null default false,
+    cf_num_18_read boolean not null default false, cf_num_18_edit boolean not null default false,
+    cf_num_19_read boolean not null default false, cf_num_19_edit boolean not null default false,
+    cf_num_20_read boolean not null default false, cf_num_20_edit boolean not null default false,
+    cf_num_21_read boolean not null default false, cf_num_21_edit boolean not null default false,
+    cf_num_22_read boolean not null default false, cf_num_22_edit boolean not null default false,
+    cf_num_23_read boolean not null default false, cf_num_23_edit boolean not null default false,
+    cf_num_24_read boolean not null default false, cf_num_24_edit boolean not null default false,
+    cf_num_25_read boolean not null default false, cf_num_25_edit boolean not null default false,
+    cf_bool_01_read boolean not null default false, cf_bool_01_edit boolean not null default false,
+    cf_bool_02_read boolean not null default false, cf_bool_02_edit boolean not null default false,
+    cf_bool_03_read boolean not null default false, cf_bool_03_edit boolean not null default false,
+    cf_bool_04_read boolean not null default false, cf_bool_04_edit boolean not null default false,
+    cf_bool_05_read boolean not null default false, cf_bool_05_edit boolean not null default false,
+    cf_bool_06_read boolean not null default false, cf_bool_06_edit boolean not null default false,
+    cf_bool_07_read boolean not null default false, cf_bool_07_edit boolean not null default false,
+    cf_bool_08_read boolean not null default false, cf_bool_08_edit boolean not null default false,
+    cf_bool_09_read boolean not null default false, cf_bool_09_edit boolean not null default false,
+    cf_bool_10_read boolean not null default false, cf_bool_10_edit boolean not null default false,
+    cf_bool_11_read boolean not null default false, cf_bool_11_edit boolean not null default false,
+    cf_bool_12_read boolean not null default false, cf_bool_12_edit boolean not null default false,
+    cf_bool_13_read boolean not null default false, cf_bool_13_edit boolean not null default false,
+    cf_bool_14_read boolean not null default false, cf_bool_14_edit boolean not null default false,
+    cf_bool_15_read boolean not null default false, cf_bool_15_edit boolean not null default false,
+    cf_bool_16_read boolean not null default false, cf_bool_16_edit boolean not null default false,
+    cf_bool_17_read boolean not null default false, cf_bool_17_edit boolean not null default false,
+    cf_bool_18_read boolean not null default false, cf_bool_18_edit boolean not null default false,
+    cf_bool_19_read boolean not null default false, cf_bool_19_edit boolean not null default false,
+    cf_bool_20_read boolean not null default false, cf_bool_20_edit boolean not null default false,
+    cf_bool_21_read boolean not null default false, cf_bool_21_edit boolean not null default false,
+    cf_bool_22_read boolean not null default false, cf_bool_22_edit boolean not null default false,
+    cf_bool_23_read boolean not null default false, cf_bool_23_edit boolean not null default false,
+    cf_bool_24_read boolean not null default false, cf_bool_24_edit boolean not null default false,
+    cf_bool_25_read boolean not null default false, cf_bool_25_edit boolean not null default false,
+    cf_date_01_read boolean not null default false, cf_date_01_edit boolean not null default false,
+    cf_date_02_read boolean not null default false, cf_date_02_edit boolean not null default false,
+    cf_date_03_read boolean not null default false, cf_date_03_edit boolean not null default false,
+    cf_date_04_read boolean not null default false, cf_date_04_edit boolean not null default false,
+    cf_date_05_read boolean not null default false, cf_date_05_edit boolean not null default false,
+    cf_date_06_read boolean not null default false, cf_date_06_edit boolean not null default false,
+    cf_date_07_read boolean not null default false, cf_date_07_edit boolean not null default false,
+    cf_date_08_read boolean not null default false, cf_date_08_edit boolean not null default false,
+    cf_date_09_read boolean not null default false, cf_date_09_edit boolean not null default false,
+    cf_date_10_read boolean not null default false, cf_date_10_edit boolean not null default false,
+    cf_longtext_01_read boolean not null default false, cf_longtext_01_edit boolean not null default false,
+    cf_longtext_02_read boolean not null default false, cf_longtext_02_edit boolean not null default false,
+    cf_longtext_03_read boolean not null default false, cf_longtext_03_edit boolean not null default false,
+    cf_longtext_04_read boolean not null default false, cf_longtext_04_edit boolean not null default false,
+    cf_longtext_05_read boolean not null default false, cf_longtext_05_edit boolean not null default false,
+
+    constraint pk_deal_permissions primary key (tenant_id, id),
+    constraint uq_deal_permissions_role unique (tenant_id, role_id),
+    constraint fk_deal_permissions_role_id foreign key (tenant_id, role_id)
+        references app.roles (tenant_id, id) on delete cascade,
+    constraint ck_deal_permissions_crud
+        check (can_read or not (can_create or can_edit or can_delete)),
+    -- The provider's required fields.
+    constraint ck_deal_permissions_required
+        check (not can_create or (deal_name_read and deal_name_edit))
+);
+
+alter table app.deal_permissions enable row level security;
+
+create policy tenant_isolation on app.deal_permissions
+    to blusimian_app
+    using (tenant_id = (select app.current_tenant_id()))
+    with check (tenant_id = (select app.current_tenant_id()));
+
+grant select, insert, update, delete on app.deal_permissions to blusimian_app;
+
+-- --------------------------------------------------------------------------
 -- app.find_login_user: the one read before a tenant is known. SECURITY DEFINER
 -- runs it as the owner, which RLS doesn't apply to, so it is kept narrow: one
 -- row by exact username, nothing writable. Every name in it is schema-qualified,

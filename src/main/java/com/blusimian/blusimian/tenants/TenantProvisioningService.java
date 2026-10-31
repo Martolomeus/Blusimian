@@ -2,6 +2,7 @@ package com.blusimian.blusimian.tenants;
 
 import com.blusimian.blusimian.platform.tenancy.TenantContext;
 import com.blusimian.blusimian.platform.tenancy.TenantId;
+import com.blusimian.blusimian.users.User;
 import com.blusimian.blusimian.users.UserService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -35,8 +36,8 @@ public class TenantProvisioningService {
     public TenantId provision(NewTenant request) {
         return TenantContext.callAs(request.id(), () -> transaction.execute(status -> {
             tenants.save(Tenant.create(request.id(), request.name()));
-            users.create(request.adminUsername(), request.adminDisplayName(), request.adminPassword());
-            initializers.forEach(initializer -> initializer.initialize(request.id()));
+            User first = users.create(request.adminUsername(), request.adminDisplayName(), request.adminPassword());
+            initializers.forEach(initializer -> initializer.initialize(request.id(), first.getId()));
             return request.id();
         }));
     }

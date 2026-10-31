@@ -2,7 +2,8 @@ import { SettingsCard, type SettingsCardProps } from "@/components/settings/Sett
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { ENTITIES } from "@/lib/entity/entityConfig";
 import type { EntityType } from "@/lib/entity/types";
-import { entitySettingsPath } from "./paths";
+import { PersonIcon, ShieldIcon } from "@/lib/icons";
+import { entitySettingsPath, ROLES_PATH, USERS_PATH } from "./paths";
 
 type OverviewSection = { key: string; title: string; description?: string; cards: SettingsCardProps[] };
 
@@ -19,6 +20,14 @@ function entitySettingsCard(type: EntityType): SettingsCardProps {
 // In overview order; an entity's card in the section it belongs to, in sidebar order
 // within it. A section is listed once it has a card.
 const SECTIONS: OverviewSection[] = [
+  {
+    key: "general",
+    title: "General",
+    cards: [
+      { title: "Roles", description: "What each role can see and change.", to: ROLES_PATH, icon: ShieldIcon },
+      { title: "Users", description: "The people in your organisation and their roles.", to: USERS_PATH, icon: PersonIcon },
+    ],
+  },
   { key: "crm", title: "CRM", cards: [entitySettingsCard("CONTACT"), entitySettingsCard("COMPANY")] },
   { key: "sales", title: "Sales", cards: [entitySettingsCard("DEAL")] },
 ];

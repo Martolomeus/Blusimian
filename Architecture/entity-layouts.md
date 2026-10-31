@@ -382,9 +382,10 @@ and back (the flush-order trap of §5.6).
 
 - Role assignment: an assignment store and the role argument to `resolve` (§5.4). Until
   then only the default layout is served; other layouts can be built and kept.
-- Permissions: every `/api/entity-layouts` endpoint is an admin function and should
-  require the admin role once roles exist (today any logged-in user of the tenant may
-  call it). The schema bundle stays open to every signed-in user.
+- Permissions: every write on `/api/entity-layouts` will require `manage_layouts`
+  (`roles-and-permissions.md` §2.5). The roles exist, but nothing is enforced yet, so any
+  logged-in user of the tenant may call it. The schema bundle stays open to every
+  signed-in user.
 
 **Known limitations:**
 
@@ -409,7 +410,8 @@ and back (the flush-order trap of §5.6).
 ## 10. Extension points
 
 - **New entity type:** add it to `EntityType` and to the `entity_type` CHECKs; implement
-  `RecordEntity` and a `StandardFieldProvider`; add its default to `DefaultLayoutTemplates`. No change inside
+  `RecordEntity` and a `StandardFieldProvider`; add its default to `DefaultLayoutTemplates`;
+  give it a permission table (`roles-and-permissions.md` §10). No change inside
   `entityLayouts` or `entitySchema`. For the frontend side see
   `frontend-entity-pages.md` §8.
 - **New built-in field:** one `FieldDescriptor` in the entity's provider, and a placement

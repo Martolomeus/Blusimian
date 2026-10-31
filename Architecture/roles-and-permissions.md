@@ -1,9 +1,9 @@
-# Roles & Permissions — Spec
+# Roles & Permissions — Architecture Reference
 
-**Status:** Proposal, nothing implemented · **Scope:** roles, their permission tables, role assignments, and the Roles and Users settings pages. Resolving what a user may do, and enforcing it, are out of scope (§7 lists only what this design requires of them).
-**Date:** 2026-10-31 · **Builds on (as-built):** `Architecture/multitenancy.md`, `Architecture/custom-fields.md`, `Architecture/entity-layouts.md`, `WIP/settings-sections.md` (built, not yet folded into `Architecture/settings.md`)
-**Companion:** `WIP/job-title-layouts.md`. Layouts follow a user's job title, so nothing here touches layouts. Build this spec first: the companion extends its Users pages.
-**Code:** new package `roles`; `users`, `tenants`, `customFields`, `V1__init.sql`; `Frontend/src/features/settings`, new `Frontend/src/lib/roles`, `Frontend/src/lib/users`
+**Status:** Implemented & verified (§9): stored and editable, not enforced yet · **Scope:** roles, their permission tables, role assignments, and the Roles and Users settings pages. Resolving what a user may do, and enforcing it, are out of scope (§7 lists only what this design requires of them).
+**Last updated:** 2026-10-31 · **Builds on:** `Architecture/multitenancy.md`, `Architecture/custom-fields.md`, `Architecture/entity-layouts.md`, `Architecture/settings.md`
+**Companion:** `WIP/job-title-layouts.md`. Layouts follow a user's job title, so nothing here touches layouts.
+**Code:** package `roles`; `users`, `tenants`, `customFields`, `V1__init.sql`; `Frontend/src/features/settings/roles`, `features/settings/users`, `lib/roles`, `lib/users`
 
 > A **role** is a named set of permissions, defined per tenant. A user holds any number of
 > roles through a **role assignment**. Each role has child tables: one per entity (contact,
@@ -18,8 +18,8 @@
 > A new **General** section in settings holds a Roles card (list, then an edit page per
 > role) and a Users card (list, then a user page with the role assignments).
 >
-> This is the storage and admin side only. After this ships, permissions are stored and
-> editable, and nothing obeys them yet. Custom objects bring their own permission table
+> This is the storage and admin side only: permissions are stored and editable, and
+> nothing obeys them yet. Custom objects bring their own permission table
 > when they're built (`WIP/custom-objects-architecture.md` §12).
 
 ---
@@ -36,7 +36,7 @@
 | D6 | Field columns follow **the field dictionary, not the table**: a pair per provider field (keyed by field key) and a pair per `cf_*` slot (keyed by slot). `Company`'s address and owner columns aren't served as fields, so they get none. | §2.4 |
 | D7 | **The permission columns live only in V1.** They have no entity classes and nothing is generated: `JdbcClient` reaches them by name, and a startup check compares them to the fields. The API speaks field keys only; slot names never leave the server. | §3.2, §3.3, §4.2 |
 | D8 | One **Administrator** role per tenant (`is_admin`). It can't be edited or deleted, the resolver will grant it everything without reading its rows, and its last holder can't lose it. | §2.1, §3.5 |
-| D9 | Provisioning creates Administrator and Standard user, writing their grants explicitly, and makes the first user an Administrator. `TenantInitializer.initialize` gains the first user's id. | §3.6 |
+| D9 | Provisioning creates Administrator and Standard user, writing their grants explicitly, and makes the first user an Administrator. `TenantInitializer.initialize` receives the first user's id. | §3.6 |
 | D10 | A role still held by a user can't be deleted (409). Once free, its child rows go by cascade. | §2.2, §3.4 |
 | D11 | `users` doesn't know roles exist. `roles` depends on `users`, assignments are read separately, and the page joins them. | §3.1 |
 | D12 | **A role with Create must keep Read and Edit on every required field.** `RoleValidator` checks it on every save, a new required custom field is granted to roles with Create in its own transaction, and a CHECK backs it up for standard fields. | §3.8, §6.4 |
@@ -47,7 +47,7 @@
 
 ## 2. Data model
 
-All tables are in `app`, follow the recipe in `multitenancy.md` §17 (tenant block, `(tenant_id, id)` primary key, composite FKs, RLS, four grants), and go in `V1__init.sql` per the dev-phase policy. After editing V1, run `make db-reset`.
+All tables are in `app`, follow the recipe in `multitenancy.md` §17 (tenant block, `(tenant_id, id)` primary key, composite FKs, RLS, four grants), and are in `V1__init.sql` per the dev-phase policy.
 
 ```
 app.users ──< app.role_assignments >── app.roles
@@ -57,7 +57,7 @@ app.users ──< app.role_assignments >── app.roles
                                           └─ 1:1  app.deal_permissions
 ```
 
-`app.roles` and its children go after `app.entity_layout_section_fields`, before `find_login_user`.
+`app.roles` and its children sit after `app.entity_layout_section_fields`, before `find_login_user`.
 
 ### 2.1 `app.roles`
 
@@ -237,13 +237,13 @@ Whether the Settings link shows is derived (the caller holds any of these), so i
 
 ### 3.1 Package and dependency direction
 
-New package `com.blusimian.blusimian.roles`, with `dto/` and `exception/` as elsewhere.
+Package `com.blusimian.blusimian.roles`, with `dto/` and `exception/` as elsewhere.
 
 ```
 platform     ──► (nothing)
 users        ──► platform                                         (unchanged: knows nothing of roles)
 customFields ──► entityModel platform                             (publishes an event; knows nothing of roles)
-roles        ──► entityModel customFields tenants users platform  ← NEW
+roles        ──► entityModel customFields tenants users platform
 tenants      ──► users
 ```
 
@@ -254,7 +254,7 @@ No new cycle. `roles` reads custom field definitions, so `customFields` can't ca
 | `Role`, `RoleRepository` | The parent row. `Role.create(name)`, `Role.createAdministrator(name)`, `rename`. No setter for `isAdmin`. |
 | `AppPermission`, `AppPermissionRepository` | The row of §2.5. A small table, so an ordinary entity. |
 | `EntityPermissionRepository` | A plain `@Repository` over `JdbcClient`, for the three entity tables (§3.2). |
-| `FieldPermissionCatalog` | Field key → its two column names, for every field an entity has now (§3.2). |
+| `FieldPermissionCatalog`, `PermissionField` | Field key ↔ its two column names, for every field an entity has now, and a row ↔ a document (§3.2). |
 | `PermissionColumnsVerifier` | Startup check: the columns match the fields (§3.3). |
 | `RoleValidator` | Plain class, like `EntityLayoutValidator` (§4.3). |
 | `RequiredFieldGrants` | Listens for `CustomFieldCreated` (§3.8). |
@@ -303,13 +303,13 @@ class EntityPermissionRepository {
     }
 
     void grantToRolesWithCreate(EntityType type, String slot) {
-        jdbc.sql("update app." + table(type) + " set " + slot + "_read = true, " + slot
-                        + "_edit = true, updated_at = now() where can_create")
+        jdbc.sql("update app." + table(type) + " set " + PermissionField.readColumn(slot) + " = true, "
+                        + PermissionField.editColumn(slot) + " = true, updated_at = now() where can_create")
                 .update();
     }
 
     /** No default branch, so a new EntityType doesn't compile until it has a table. */
-    private static String table(EntityType type) {
+    static String table(EntityType type) {
         return switch (type) {
             case CONTACT -> "contact_permissions";
             case COMPANY -> "company_permissions";
@@ -321,10 +321,10 @@ class EntityPermissionRepository {
 
 `FieldPermissionCatalog.fieldsFor(entityType)` returns the entity's fields as `PermissionField(key, required, readColumn, editColumn)`, in dictionary order. It's the only place that turns a field key into column names:
 
-- standard fields: from `EntityFieldDictionary`, the key in snake case: `firstName` → `first_name_read`;
+- standard fields: from `StandardFieldRegistry`, the key in snake case: `firstName` → `first_name_read`;
 - custom fields: `CustomFieldService.listActive(entityType)` gives each key's `column_name`: `cf_text_03` → `cf_text_03_read`.
 
-`FieldDescriptor` carries no column name and shouldn't start to, so the catalog reads definitions directly.
+`FieldDescriptor` carries no column name and shouldn't start to, so the catalog reads definitions directly, composing the same two sources as `EntityFieldDictionary`. It also turns a document into `column → value` (`toColumns`, matching keys case-insensitively) and a row back into a document (`toPermissions`), so `RoleValidator` and `RoleService` work from the same conversion and can't disagree.
 
 Three things to get right:
 
@@ -336,7 +336,7 @@ Three things to get right:
 
 With no entity classes, Hibernate's `ddl-auto=validate` doesn't look at these tables, so a small startup check takes over that job. `PermissionColumnsVerifier` is a `SmartInitializingSingleton`, in the style of `RowLevelSecurityVerifier`. For each table it reads the `_read` and `_edit` column names from `information_schema.columns` and compares them with what should exist: a pair per provider field and a pair per `CustomFieldSlots` slot.
 
-Anything missing or extra stops the app, with a message naming the column. So a provider field added without its V1 columns, or a slot pool widened on the record tables only, fails at boot rather than at the first request. The comparison is a pure function, unit-tested without a database, as in `RowLevelSecurityVerifier`.
+`can_read` and `can_edit` end the same way but are CRUD columns, so the comparison skips them. Anything missing or extra stops the app, with a message naming the column. So a provider field added without its V1 columns, or a slot pool widened on the record tables only, fails at boot rather than at the first request. The comparison is a pure function, unit-tested without a database, as in `RowLevelSecurityVerifier`.
 
 ### 3.4 `RoleService`
 
@@ -347,6 +347,7 @@ Anything missing or extra stops the app, with a message naming the column. So a 
 | `create(request)` | Takes the field locks (§3.8), validates, then writes the role and four rows in one transaction. |
 | `replace(id, request)` | 409 on the Administrator. Takes the field locks, then updates the name and applies the document. **Fields absent from the document stay as they are**, so a custom field created while an admin had the editor open keeps its bits. |
 | `delete(id)` | 409 on the Administrator. 409 with the count if held: "12 users still have this role." The FK is the backstop for a concurrent assignment. |
+| `createWithFullRecordAccess(role, app)` | Provisioning only (§3.6): all CRUD and both bits on every field the entity has now. |
 
 A name clash is translated from `uq_roles_name` into `RoleNameTakenException`, the way `UserService` handles `uq_users_username`.
 
@@ -357,23 +358,25 @@ A name clash is translated from `uq_roles_name` into `RoleNameTakenException`, t
 | Method | Rules |
 |---|---|
 | `list()` | Every assignment in the tenant as `(userId, roleId)`. One query, no N+1 for the Users page. |
-| `assign(userId, roleId)` | Loads both first, so a guessed id is a 404 (RLS hides it). Idempotent. |
-| `unassign(userId, roleId)` | Idempotent. When the role is the Administrator, runs the check below. |
+| `assign(userId, roleId)` | Loads both first, so a guessed id is a 404 (RLS hides it). Idempotent: `insert … on conflict do nothing`, so two identical requests at once both succeed. |
+| `unassign(userId, roleId)` | Loads both first. Idempotent: one bulk `delete`. When the role is the Administrator and the user really holds it, runs the check below first. |
 
-**At least one enabled user must hold Administrator.** There's no cross-tenant admin console (`multitenancy.md` §1), so a tenant that loses its last Administrator can't recover by itself. Two admins removing each other at the same moment could each see the other as still present, so the check takes a transaction-scoped advisory lock per tenant, the same technique as `CustomFieldService.lockSlotAllocation`, with its own namespace:
+**At least one enabled user must hold Administrator.** There's no cross-tenant admin console (`multitenancy.md` §1), so a tenant that loses its last Administrator can't recover by itself. Two admins removing each other at the same moment could each see the other as still present, so the check takes a transaction-scoped advisory lock per tenant, the same technique as `CustomFieldService.lockEntityFields`, with its own namespace:
 
 ```java
-lock();   // pg_advisory_xact_lock(ROLE_ADMIN_LOCK_NAMESPACE, tenant hash)
-if (assignments.countEnabledHolders(adminRoleId) <= 1) {
+// pg_advisory_xact_lock(ROLE_ADMIN_LOCK_NAMESPACE, tenant hash)
+if (assignments.countOtherEnabledHolders(roleId, userId) == 0) {
     throw new LastAdministratorException();
 }
 ```
 
-Only an Administrator removal takes the lock, so normal assignment never waits. This counts enabled users because `enabled` is a real column, even though this spec gives no way to change it. The future disable-user path must run the same check.
+It counts the *other* enabled holders. So removing Administrator from someone who doesn't hold it stays a no-op, removing a disabled holder is allowed while an enabled one remains, and a disabled holder doesn't count as the one left.
+
+Only a real Administrator removal takes the lock, so normal assignment never waits. This counts enabled users because `enabled` is a real column, even though no endpoint changes it yet. The future disable-user path must run the same check.
 
 ### 3.6 Provisioning
 
-`TenantInitializer` learns who the first user is, since `RolesInitializer` has to assign them. `provision` already creates that user and discards the result:
+`TenantInitializer.initialize` is told who the first user is, since `RolesInitializer` has to assign them:
 
 ```java
 public interface TenantInitializer {
@@ -394,7 +397,7 @@ initializers.forEach(initializer -> initializer.initialize(request.id(), first.g
 | Administrator | yes | all CRUD | all standard fields | all |
 | Standard user | no | all CRUD on Contact, Company, Deal | all standard fields | none |
 
-With everything closed by default, `RolesInitializer` has to write these grants itself, through the catalog. A new tenant has no custom fields, so the standard fields are all there is. Standard user is an ordinary role: editable, deletable, and only a starting point. Failing here fails provisioning as a whole, as for layouts.
+With everything closed by default, `RolesInitializer` writes these grants itself, through `RoleService.createWithFullRecordAccess` and the catalog. A new tenant has no custom fields, so the standard fields are all there is. Standard user is an ordinary role: editable, deletable, and only a starting point. Failing here fails provisioning as a whole, as for layouts.
 
 Administrator's stored bits are never read (D8), so they fall behind as custom fields are added. That's why its page shows no matrix and it can't be duplicated (§5.3).
 
@@ -402,7 +405,7 @@ Administrator's stored bits are never read (D8), so they fall behind as custom f
 
 ### 3.7 Users
 
-`users` gains what the User page needs, and nothing about roles:
+`users` has what the User page needs, and nothing about roles:
 
 - `GET /api/users/{id}`, with `UserNotFoundException` → 404.
 - `PUT /api/users/{id}`, body `UpdateUserRequest(@NotBlank @Size(max = 255) String displayName)`, with `User.rename(displayName)`.
@@ -443,7 +446,7 @@ Spring runs an `@EventListener` on the publisher's thread, inside its transactio
 
 This is the only code that sets a bit to `true` without an admin asking, and it's narrow: required fields only, and only on roles that already hold Create. There's no way around it, because the alternatives are a role that silently can't create, or taking Create away from it.
 
-**Two admins at the same moment.** A role save and a required-field create could each miss the other's work, so both take the lock custom fields already use. `lockSlotAllocation` becomes a public `CustomFieldService.lockEntityFields(entityType)`, marked `@Transactional(propagation = MANDATORY)` because a transaction-scoped lock outside a transaction is released at once. `RoleService.create` and `replace` take it for every `EntityType`, in enum order, before reading anything. Creating a field takes only one, so the two can't deadlock. Role saves then run one at a time within a tenant, which costs nothing for an admin action.
+**Two admins at the same moment.** A role save and a required-field create could each miss the other's work, so both take the lock custom fields already use. That lock is the public `CustomFieldService.lockEntityFields(entityType)`, marked `@Transactional(propagation = MANDATORY)` because a transaction-scoped lock outside a transaction is released at once. `RoleService.create` and `replace` take it for every `EntityType`, in enum order, before reading anything. Creating a field takes only one, so the two can't deadlock. Role saves then run one at a time within a tenant, which costs nothing for an admin action.
 
 **The database backstop.** For standard fields the rule is also the `ck_*_required` CHECK in V1. No CHECK can cover custom fields, because whether a slot is required depends on the tenant and lives in another table.
 
@@ -555,7 +558,7 @@ No JSX, same rule as `lib/layouts`.
 | File | Role |
 |---|---|
 | `lib/roles/types.ts` | The document and request types. |
-| `lib/roles/roles.ts` | `useRoles`, `useRole(id)`, `useCreateRole`, `useUpdateRole`, `useDeleteRole`, `useRoleAssignments`, `useAssignRole`, `useUnassignRole`. |
+| `lib/roles/roles.ts` | `useRoles`, `useRole(id)`, `useEntityFields` (every entity's schema bundle, combined), `useCreateRole`, `useUpdateRole`, `useDeleteRole`, `useRoleAssignments`, `useAssignRole`, `useUnassignRole`. |
 | `lib/roles/roleDraft.ts` | The editor's model (§5.4). Pure. |
 | `lib/users/users.ts` | `useUsers`, `useUser(id)`, `useUpdateUser`. |
 
@@ -603,7 +606,7 @@ The intro carries D14, the same way the Layouts section admits what isn't live y
 - With Read on and no field ticked, a muted line says "This role will see empty records."
 - **Administrator:** no matrix. The name, a badge, and "The Administrator role has every permission and can't be changed."
 
-`roleDraft.ts` follows `layoutDraft.ts`: `fromRole`, `blankDraft`, `copyDraft`, `toRequest`, `isDirty`, `validateDraft`, and one reducer that takes the required keys, like `layoutDraftReducer(draft, action, requiredKeys)`. A key missing from the document is closed, the same as the column default.
+`roleDraft.ts` follows `layoutDraft.ts`: `fromRole`, `blankDraft`, `copyDraft`, `toRequest`, `isDirty`, `validateDraft`, and one reducer that takes the required keys, like `layoutDraftReducer(draft, action, requiredKeys)`. A key missing from the document is closed, the same as the column default. A key the document has but the dictionary doesn't is left out of the draft and so out of the save, which keeps its stored bits. A required field arriving closed while Create is on (it can only be mid-race) opens in the draft, so the editor can't hold what the validator rejects.
 
 | Action | Effect |
 |---|---|
@@ -616,11 +619,11 @@ The intro carries D14, the same way the Layouts section admits what isn't live y
 
 So the UI can't produce what the validator rejects, and the server stays the authority: a 400 appears in the error banner, line per `details` entry, as in the layout editor.
 
-**Saving** behaves as in `settings.md` §6.6: `PUT` resets the draft from the response; `POST` moves to `/settings/roles/:id` with `replace`. Extract the guard from `LayoutEditor.tsx` (`useBlocker`, `beforeunload`, the `leaving` ref) into `lib/useUnsavedChangesGuard.ts`, used by both editors, rather than copying it. Last save wins.
+**Saving** behaves as in `settings.md` §6.6: `PUT` resets the draft from the response; `POST` moves to `/settings/roles/:id` with `replace`. The guard (`useBlocker`, `beforeunload`, the `leaving` ref) is `lib/useUnsavedChangesGuard.ts`, shared with the layout editor and the User page. Last save wins.
 
 ### 5.5 Users list (`/settings/users`)
 
-A `.list-table`: Name (link), Username, Roles (comma-separated names, or `—`), Status (a "Disabled" badge when applicable). It joins `useUsers`, `useRoleAssignments` and `useRoles` on the page. The row opens the user. There's no New user button in this spec (§8).
+A `.list-table`: Name (link), Username, Roles (comma-separated names, or `—`), Status (a "Disabled" badge when applicable). It joins `useUsers`, `useRoleAssignments` and `useRoles` on the page. The row opens the user. There's no New user button (§8).
 
 ### 5.6 User page (`/settings/users/:id`)
 
@@ -646,7 +649,7 @@ alice · Active · Joined 28 Oct 2026
 
 ## 6. Architectural integrity analysis
 
-Each DDL claim in this section was run; §9.1 says how and what wasn't covered.
+Each claim in this section is covered by a test or was run by hand; §9 says which.
 
 ### 6.1 What holds up
 
@@ -665,7 +668,7 @@ Each DDL claim in this section was run; §9.1 says how and what wasn't covered.
 | **Nobody can administer the first role** | A fresh tenant has no roles, and a roles page guarded by a role can't be used to create the first | Provisioning creates Administrator and assigns the first user (D9) |
 | **A tenant can lock itself out** | No cross-tenant console exists | Administrator is locked, and its last holder is protected, with a lock against the two-admins race (§3.5) |
 | **Standard columns can drift from the provider** | Adding a provider field without columns would leave a field that no permission covers | `PermissionColumnsVerifier` stops the app at boot (§3.3) |
-| **A reused slot inherits grants** | A slot's bits have no link to the field that owned them, so a new field would start out granted to whoever held the old one. That defeats D4 | Purge resets the pair to `false` (§2.6). Purge is deferred, so `custom-fields.md` §8 must gain this step now, or it will be forgotten |
+| **A reused slot inherits grants** | A slot's bits have no link to the field that owned them, so a new field would start out granted to whoever held the old one. That defeats D4 | Purge resets the pair to `false` (§2.6). Purge is deferred; `custom-fields.md` §8 records the step |
 | **Create and required fields can conflict** | §6.4 | The required-field rule (D12) |
 | **Which of `Company`'s 29 non-slot columns are "fields"?** | Only 10 are served by the API; billing address, owner and so on aren't | Pairs follow the dictionary (D6) |
 
@@ -676,7 +679,7 @@ Closed by default is the right default for permissions: a forgotten bit hides a 
 - **Mistakes fail closed.** A missed bit or a bug can only take access away.
 - **A grant means someone chose it.** A user holding Sales and Marketing can't read Margin just because nobody thought about Margin on Marketing.
 
-It also has costs, which this spec absorbs:
+It also has costs, each handled here:
 
 | Cost | Handled by |
 |---|---|
@@ -695,15 +698,15 @@ The rule involves a role's bits, a field's `required` flag and a provider's code
 
 | How it could break | Closed by | Evidence |
 |---|---|---|
-| Saving a role with Create on and a required field closed | `RoleValidator` on the merged result; the reducer; `ck_*_required` for standard fields | CHECK run |
-| Closing a required field while Create is on | The same | CHECK run |
-| A new required custom field, against roles that already hold Create | `RequiredFieldGrants`, in the field's transaction | The grant's effect run; event to test |
-| A required field created while an admin has that role open | It's absent from their document, so its granted bits stay | By design; test to write |
-| That stale document also turns Create on, for a role that missed the grant | The merged check rejects it with a 400 | By design; test to write |
-| A role save and a required-field create at the same moment | The shared advisory lock (§3.8) | Test to write |
-| A new required standard field in a later release | Adding its `ck_*_required` clause **fails the migration** until roles with Create are backfilled, so it can't be forgotten | Run: refused, then accepted after the backfill |
+| Saving a role with Create on and a required field closed | `RoleValidator` on the merged result; the reducer; `ck_*_required` for standard fields | `RoleValidatorTest`, `RequiredFieldCheckTest`, `roleDraft.test.ts` |
+| Closing a required field while Create is on | The same | `RequiredFieldRuleIntegrationTest`, `roleDraft.test.ts` |
+| A new required custom field, against roles that already hold Create | `RequiredFieldGrants`, in the field's transaction | `RequiredFieldRuleIntegrationTest` |
+| A required field created while an admin has that role open | It's absent from their document, so its granted bits stay | `RequiredFieldRuleIntegrationTest` |
+| That stale document also turns Create on, for a role that missed the grant | The merged check rejects it with a 400 | `RequiredFieldRuleIntegrationTest` |
+| A role save and a required-field create at the same moment | The shared advisory lock (§3.8) | `RequiredFieldRuleIntegrationTest`, which fails with the lock removed (§9.1) |
+| A new required standard field in a later release | Adding its `ck_*_required` clause **fails the migration** until roles with Create are backfilled, so it can't be forgotten | Run on Postgres 16: refused, then accepted after the backfill |
 | A purged slot taken by a new required field | The purge resets the pair, then the field goes through the normal create path | Purge is deferred |
-| `required` switched on for an existing field, or a field un-archived | Neither has an endpoint today. Whichever adds one must publish the same event | Must be remembered: `custom-fields.md` §12 gains the note |
+| `required` switched on for an existing field, or a field un-archived | Neither has an endpoint today. Whichever adds one must publish the same event | Must be remembered: `custom-fields.md` §10 says so |
 | Hand-written SQL | `ck_*_required` for standard fields. Custom fields aren't covered | Trusted, as in `multitenancy.md` §13 |
 
 Two cases need no protection. A role **without Create** may have a required field closed. An **archived** field stops being required (`CustomFieldDescriptors` already does this), so its bits can't conflict.
@@ -765,7 +768,7 @@ may write field    = some role of the user: role.entity.can_<create|edit> and ro
 | One `smallint` per field (none/read/edit) | Would make Edit without Read unrepresentable and halve the columns. The brief asks for two booleans, which also read better in SQL; the validator holds the rule. |
 | One table for all entities | Standard fields differ per entity, so it would need an anonymous `std_01` pool. |
 | CHECKs for field-level Edit requires Read | 115 clauses per table, guarding a single write path. |
-| JPA entities for the permission tables, with a generated Java mirror like `CustomFieldSlots` | An earlier draft of this spec. It needs about 230 fields per table, each with a getter and setter, and a new script, for columns that are only ever reached by name. It wouldn't add compile-time safety, since all access is by key anyway. |
+| JPA entities for the permission tables, with a generated Java mirror like `CustomFieldSlots` | An earlier draft of this design. It needs about 230 fields per table, each with a getter and setter, and a new script, for columns that are only ever reached by name. It wouldn't add compile-time safety, since all access is by key anyway. |
 | A `do $$ … $$` loop in V1 that adds the columns | Far fewer lines, but the columns can't be found by searching V1, and V1 spells everything else out. |
 | Deny rules, role inheritance, permission sets | Each needs a precedence model. Grants only, for now. |
 | New user, disable user, delete user, password reset on the Users pages | Not asked for. `POST /api/users` exists, so New user is a small addition later. The companion spec seeds a second demo user for testing. |
@@ -778,43 +781,30 @@ may write field    = some role of the user: role.entity.can_<create|edit> and ro
 
 ## 9. Verification
 
-### 9.1 Already run (2026-10-31)
+Verified 2026-10-31 against Postgres 16 (`postgres:16`, the dev container), as `blusimian_app` under RLS.
 
-The real `V1__init.sql`, with the DDL of this spec and the companion added, applied as `blusimian_owner`, then exercised as `blusimian_app` under RLS. 62 scenarios, all as expected:
-
-- one Administrator per tenant; duplicate role names; a second child row for a role; Edit or Create without Read;
-- a new row is closed in every column;
-- `ck_*_required` on all three tables: Create refused with a required field closed, or only one of two open; accepted once open; closing a required field refused while Create is on; allowed once Create is off; a role with Edit but no Create may keep a required field closed;
-- the grant for a required custom field reaches only rows with Create (the update alone, not the event);
-- adding a new required-field CHECK fails while a role with Create lacks the bits, and succeeds after a backfill;
-- the SQL `EntityPermissionRepository` will send: an insert naming only `role_id`, `select *` returning all 239 columns, an update changing only the columns it names;
-- `blusimian_app` can read the column names from `information_schema`, and they match the expected list on all three tables;
-- `bool_or` gives the AND-then-OR of §7 in one query;
-- another tenant's role or user can't be assigned, by guessed UUID;
-- a held role can't be deleted, and the refusal leaves child rows alone; a free role cascades through all four children; deleting a user cascades assignments;
-- tenant B sees none of A's rows; an insert naming another tenant fails `with check`;
-- startup checks C3–C5 pass on all 18 tables, with the verifier's exact policy text;
-- adding a pair with `default false` needs no table rewrite.
-
-**Not covered.** This ran on PGlite 0.4.5 (Postgres 17.5 compiled to WASM) because the Docker daemon wasn't running, so it wasn't Postgres 16. That build has no ICU, so `app.case_insensitive` was swapped for a deterministic stand-in, and case-insensitive name uniqueness **wasn't** exercised. The row size was measured on a 32-bit build. No Java was compiled, so `EntityPermissionRepository`, the startup check, the event and the lock are unproven, though the SQL they send was run.
-
-### 9.2 Tests to add
+### 9.1 Tests
 
 | Test | Kind | Covers |
 |---|---|---|
-| `PermissionColumnsVerifierTest` | unit | A missing column and an extra column are each reported by name; a matching list passes. |
-| `FieldPermissionCatalogTest` | unit | Standard keys become snake-case columns; a custom field becomes its slot's columns; an archived field is absent. |
+| `PermissionColumnsVerifierTest` | unit | A missing column and an extra column are each reported by name; a matching list passes; `can_read` and `can_edit` aren't mistaken for field columns. |
+| `FieldPermissionCatalogTest` | unit | Standard keys become snake-case columns; a custom field becomes its slot's columns; an archived field is absent; a document becomes columns without its own spelling reaching SQL; a row becomes a document under keys. |
 | `RoleValidatorTest` | unit | Each rule of §4.3, several reported together, case-insensitive keys, the required rule on the merged result. |
-| `RequiredFieldGrantsTest` | unit | An optional field writes nothing. A required field reaches only rows with Create. |
+| `RequiredFieldGrantsTest` | unit | An optional field writes nothing; a required field is granted on its entity. |
 | `roleDraft.test.ts` (Vitest) | unit | Each reducer rule; ticking Create ticks required fields; a locked field refuses, and unlocks with Create off; `setAllFields`; `copyDraft`; `isDirty`. |
 | `EntityPermissionRepositoryTest` | integration | Insert, find and update as `blusimian_app`. A new row is closed everywhere. Another tenant's row can't be read or updated. `RoleService.create` flushes before the inserts. |
-| `RequiredFieldCheckTest` | integration | Driven by the providers: for each entity, each required field closed in turn is refused while Create is on. Fails if the CHECK and `required` drift apart. |
-| `TenantIsolationTest`, extended | integration | Cross-tenant role and user in `assign`; the role list shows only the tenant's roles. Provisioning gives each tenant both roles, Standard user all standard fields, and its first user Administrator. |
-| `RoleAssignmentIntegrationTest` | integration | Removing the last Administrator is a 409; removing one of two works; two concurrent removals leave one. A held role's delete is a 409. |
-| `RequiredFieldRuleIntegrationTest` | integration | A required custom field reaches roles with Create. A failed create rolls the grant back. A concurrent role save and field create leave the rule intact. A stale `PUT` keeps the granted bits, and is refused if it turns Create on without them. |
-| Case-insensitive names | integration | `Sales` and `SALES` clash (the gap in §9.1). |
+| `RequiredFieldCheckTest` | integration | Driven by the providers: each required field closed in turn is refused while Create is on, and no optional field is demanded. Fails if the CHECK and `required` drift apart. |
+| `RoleServiceIntegrationTest` | integration | One row in each table; a document round-trips; keys, never slots; a field left out of a `PUT` keeps its bits; `Sales` and `SALES` clash; the Administrator is locked; delete cascades. |
+| `RoleAssignmentIntegrationTest` | integration | Last Administrator, disabled holders, idempotent assign and unassign, concurrent removals and assigns, held-role delete, the FK backstop, user delete cascades. |
+| `RequiredFieldRuleIntegrationTest` | integration | A required custom field reaches only roles with Create. A failed create rolls the grant back. A concurrent role save and field create leave the rule intact. A stale `PUT` keeps the granted bits, and is refused if it turns Create on without them. |
+| `RoleApiTest` | integration (MockMvc) | JSON shapes, status codes, no `cf_` in a document, `isAdmin` in a body ignored, malformed documents are 400s, every endpoint needs a session. |
+| `TenantIsolationTest`, extended | integration | Provisioning gives each tenant both roles and makes its first user Administrator; a role or user of another tenant can't be read or assigned, by service or by raw SQL; another tenant's user is a 404. |
 
-### 9.3 By hand
+**The two concurrency tests can fail.** Each was run once with its lock removed: without the Administrator lock a tenant ended with no Administrator, and without the field locks a role held Create without a required field. Both tests went red for that reason.
+
+### 9.2 By hand
+
+Passed in Chrome against the running app, on a freshly reset database.
 
 1. `/settings` shows General first, with Roles and Users; other sections are unchanged.
 2. A fresh tenant lists Administrator (1 user, badge) and Standard user. Log in as `alice` and `bob`: each sees only their own tenant's data.
@@ -828,40 +818,13 @@ The real `V1__init.sql`, with the DDL of this spec and the companion added, appl
 10. Add and remove a role: applied at once, no Save. Removing Administrator from the last holder shows the error and changes nothing.
 11. A role with holders: Delete is disabled. Remove the holders: it enables, and delete works.
 
----
+Also run: a name clash in the editor's banner; `?from=` on the Administrator; unknown role and user ids; the layout editor's and the User page's unsaved-changes guards.
 
-## 10. Build order
-
-Each step ends with a green build. Backend first, per the project's focus.
-
-1. **Schema.** The V1 tables; `make db-reset`. `RowLevelSecurityVerifier` checks them on boot.
-2. **Read path.** `Role`, `EntityPermissionRepository`, `FieldPermissionCatalog`, `PermissionColumnsVerifier`, `RoleService.list/get`, the GET endpoints; their tests.
-3. **Provisioning.** `TenantInitializer` signature, `RolesInitializer`. Roles now exist for real. Extend `TenantIsolationTest`.
-4. **Write path.** `RoleValidator`, `create`, `replace`, `delete`.
-5. **Required rule.** `CustomFieldCreated`, `RequiredFieldGrants`, the public `lockEntityFields` and its use in `RoleService`. `CustomFieldService` gains a constructor argument, so `CustomFieldSlotAllocationTest:50` changes too. `RequiredFieldCheckTest`, `RequiredFieldRuleIntegrationTest`.
-6. **Assignments.** `RoleAssignmentService`, the last-Administrator check, its integration test.
-7. **Users.** `GET` and `PUT /api/users/{id}`.
-8. **Frontend data.** `lib/roles`, `lib/users`, `roleDraft` with tests; extract `useUnsavedChangesGuard`.
-9. **Pages.** The overview section, Roles list and editor, Users list and page, routes.
-10. `npm run build`, `npm test`, `./mvnw test`, the §9.3 checklist.
-11. **Docs:** §11, then delete this file.
+**Not checked:** phone-width layouts and keyboard-only use of the matrix.
 
 ---
 
-## 11. Docs to update when this lands
-
-| Document | Change |
-|---|---|
-| `Architecture/roles-and-permissions.md` | **New**, as-built, from this spec |
-| `Architecture/multitenancy.md` | §1: roles leave the non-goals. §5.7: the new tables. §10.1: the initializer signature, `RolesInitializer`. §18.3: answered |
-| `Architecture/custom-fields.md` | §7: creating a field publishes `CustomFieldCreated`, and the lock is shared with role saves. §8: the purge resets the slot's pair to `false` on every role. §10: a field that becomes required later must publish the same event. §12: a new entity type also needs a permission table |
-| `Architecture/entity-layouts.md` | §10: same recipe note. §9: permissions on `/api/entity-layouts` become `manage_layouts` |
-| `Architecture/settings.md` | The General section and its pages. First fold in `WIP/settings-sections.md`, whose step 7 is still pending: this document still describes `/settings/layouts`, which no longer exists |
-| `TenantUserPrincipal.java` | The `// roles: later` comment points at §7.4 |
-
----
-
-## 12. Extension recipes (after this lands)
+## 10. Extension recipes
 
 | To add | Do |
 |---|---|

@@ -1,8 +1,8 @@
 # Job Titles & Layout Assignment — Spec
 
 **Status:** Proposal, nothing implemented · **Scope:** a tenant-defined list of job titles, a job title on each user, and assigning entity layouts per job title
-**Date:** 2026-10-31 · **Builds on (as-built):** `Architecture/entity-layouts.md`, `Architecture/multitenancy.md`, `WIP/settings-sections.md` (built, not yet folded into `Architecture/settings.md`)
-**Depends on:** `WIP/roles-and-permissions.md`. This spec adds to its Users pages, `PUT /api/users/{id}` and `manage_job_titles`, so build that one first.
+**Date:** 2026-10-31 · **Builds on (as-built):** `Architecture/entity-layouts.md`, `Architecture/multitenancy.md`, `Architecture/settings.md`
+**Depends on:** `Architecture/roles-and-permissions.md` (built). This spec adds to its Users pages, `PUT /api/users/{id}` and `manage_job_titles`.
 **Code:** new package `jobTitles`; `users`, `entityLayouts`, `entitySchema`, `tenants`, `V1__init.sql`; `Frontend/src/features/settings`, new `Frontend/src/lib/jobTitles`
 
 > **This replaces role-based layout assignment.** `entity-layouts.md` and `settings.md`
@@ -513,7 +513,7 @@ Everything that still promises role-based assignment:
 | Where | Change |
 |---|---|
 | `Architecture/entity-layouts.md` | Status line. §2: `job_title_layouts`, `uq_entity_layouts_type`. §5.4: rewritten around this spec. §5.5: "by role later" → by job title. §9: role assignment comes off "Not built". §4: the dependency graph |
-| `Architecture/settings.md` | §1 and §5: the "only the default layout is shown" text and its `Assigned to` note. §8: the admin rule becomes `manage_layouts`. The job title pages. Fold in `WIP/settings-sections.md` first (permissions spec §11) |
+| `Architecture/settings.md` | §1 and §5: the "only the default layout is shown" text and its `Assigned to` note. §8: the admin rule becomes `manage_layouts`. The job title pages |
 | `Architecture/multitenancy.md` | §5.7: the new tables and the `users` FK. §18.3: no longer "role-based layout assignment" |
 | `WIP/custom-objects-architecture.md` | Phase 0's list gains `job_title_layouts` |
 | `EntityLayoutService.java:55-61` | `resolve` Javadoc |

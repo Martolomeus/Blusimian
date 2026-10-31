@@ -60,7 +60,7 @@ public final class TenantUserPrincipal implements UserDetails, CredentialsContai
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of();   // roles: later
+        return List.of();   // resolved per request, never here: roles-and-permissions.md §7.4
     }
 
     // ProviderManager calls this after login, so the session never stores the hash.

@@ -56,6 +56,10 @@ public class User {
         return user;
     }
 
+    public void rename(String displayName) {
+        this.displayName = displayName;
+    }
+
     public UUID getId() {
         return id;
     }

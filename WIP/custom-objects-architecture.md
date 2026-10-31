@@ -1,7 +1,7 @@
 # Custom Objects — Architecture Proposal
 
 **Status:** Proposal, nothing implemented · **Scope:** tenant-defined object types next to the built-in ones
-**Date:** 2026-09-23 · **Builds on (as-built):** `Architecture/custom-fields.md`, `Architecture/entity-layouts.md` · **Must also extend:** `WIP/roles-and-permissions.md` (§12)
+**Date:** 2026-09-23 · **Builds on (as-built):** `Architecture/custom-fields.md`, `Architecture/entity-layouts.md` · **Must also extend:** `Architecture/roles-and-permissions.md` (§12)
 
 > Third pillar of entity-level customization. Custom fields decide **which fields exist**
 > on an object and layouts decide **how they're arranged**. Custom objects decide **which
@@ -45,7 +45,7 @@ worlds cleanly, in Java and in the database.
 | D5 | New slice `customObjects`; `entityModel` reaches it only via an SPI (`CustomObjectCatalog`). | §7 |
 | D6 | The union "all objects for this tenant" is built **in Java** (`StandardObject.values()` + catalog), not in SQL. | §8 |
 | D7 | Tenant-specific tweaks to standard objects (a renamed label, say) go in a **sparse** override table later: a row only when a tenant actually changed something. | §11 |
-| D8 | Custom objects join the role and permission setup: `app.custom_entity_permissions`, one sparse row per role and object. `WIP/roles-and-permissions.md` leaves this out because custom objects don't exist yet, so **it's part of building them.** | §12 |
+| D8 | Custom objects join the role and permission setup: `app.custom_entity_permissions`, one sparse row per role and object. `Architecture/roles-and-permissions.md` leaves this out because custom objects don't exist yet, so **it's part of building them.** | §12 |
 
 ---
 
@@ -509,7 +509,7 @@ returns `Optional` and the schema bundle already tolerates `layout: null`, so no
 
 ## 12. Roles and permissions (D8)
 
-`WIP/roles-and-permissions.md` covers Contact, Company, Deal and app-wide permissions. It
+`Architecture/roles-and-permissions.md` covers Contact, Company, Deal and app-wide permissions. It
 leaves custom objects out because they don't exist yet, so that setup has to be added here.
 Skipping it isn't an option once permissions are enforced: only Administrator could reach
 custom records.

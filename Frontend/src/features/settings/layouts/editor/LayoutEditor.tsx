@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
-import { Link, useBlocker, useNavigate } from "react-router";
+import { useMemo, useReducer, useState, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import clsx from "clsx";
 import { Button, ConfirmDialog } from "@/components/ui";
@@ -24,6 +24,7 @@ import {
   type LayoutDraft,
 } from "@/lib/layouts/layoutDraft";
 import type { EntityLayout, UpdateLayoutRequest } from "@/lib/layouts/types";
+import { useUnsavedChangesGuard } from "@/lib/useUnsavedChangesGuard";
 import { entitySettingsPath, SETTINGS_PATH } from "../../paths";
 import { layoutPath } from "../paths";
 import { sectionDndId } from "./dndIds";
@@ -94,27 +95,14 @@ export function LayoutEditor({ entityType, isDefault, fields, initial, isNew, sa
   const issues = useMemo(() => validateDraft(draft, fields), [draft, fields]);
   const labelInvalid = issues.some((issue) => issue.kind === "layoutLabel");
 
-  // Leaving with unsaved changes: in-app navigation asks first, reload and tab close too.
-  // `leaving` lets a new layout's move to its stored page through: that navigation runs
-  // before React re-renders, so `dirty` is still the value from before the save.
-  const leaving = useRef(false);
-  const blocker = useBlocker(() => dirty && !leaving.current);
-  useEffect(() => {
-    if (!dirty) return;
-    function warn(event: BeforeUnloadEvent) {
-      event.preventDefault();
-      event.returnValue = ""; // still needed by some browsers
-    }
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  const guard = useUnsavedChangesGuard(dirty);
 
   async function handleSave() {
     setSaveErrors([]);
     try {
       const saved = await save(toRequest(draft));
       if (isNew) {
-        leaving.current = true;
+        guard.allowLeaving();
         navigate(layoutPath(entityType, saved.id), { replace: true });
         return;
       }
@@ -230,13 +218,11 @@ export function LayoutEditor({ entityType, isDefault, fields, initial, isNew, sa
       </LayoutDndContext>
 
       <ConfirmDialog
-        open={blocker.state === "blocked"}
+        {...guard.dialog}
         title="Discard unsaved changes?"
         message="Your changes to this layout haven't been saved."
         confirmLabel="Discard changes"
         variant="danger"
-        onConfirm={() => blocker.proceed?.()}
-        onCancel={() => blocker.reset?.()}
       />
     </main>
   );

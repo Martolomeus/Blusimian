@@ -236,7 +236,7 @@ not about a field) goes into the error banner.
 |---|---|
 | A field to an entity | Backend only: a `FieldDescriptor` (or a custom field) and a placement in the layout. |
 | A data type | Backend: a `FieldDataType` constant. Frontend: add it to `FieldDataType` in `types.ts`, write a `{ Display, Input }` pair, add one line to `FIELD_TYPES`. |
-| An entity | Backend: see `entity-layouts.md` §10. Frontend: an entry in `ENTITIES` (and an icon), two routes in `router.tsx`, and a list page. |
+| An entity | Backend: see `entity-layouts.md` §10. Frontend: an entry in `ENTITIES` (and an icon), two routes in `router.tsx`, a list page, and a settings card in a `SECTIONS` section (`settings.md` §3.1). |
 
 ---
 

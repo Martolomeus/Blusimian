@@ -11,8 +11,10 @@ import com.blusimian.blusimian.entityModel.StandardFieldRegistry;
 import com.blusimian.blusimian.platform.tenancy.TenantContext;
 import com.blusimian.blusimian.platform.web.BadRequestException;
 import com.blusimian.blusimian.platform.web.ErrorCode;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
@@ -45,13 +47,16 @@ public class CustomFieldService {
     private final CustomFieldDefinitionRepository repository;
     private final StandardFieldRegistry standardFields;
     private final JdbcClient jdbcClient;
+    private final ApplicationEventPublisher events;
 
     public CustomFieldService(CustomFieldDefinitionRepository repository,
                               StandardFieldRegistry standardFields,
-                              JdbcClient jdbcClient) {
+                              JdbcClient jdbcClient,
+                              ApplicationEventPublisher events) {
         this.repository = repository;
         this.standardFields = standardFields;
         this.jdbcClient = jdbcClient;
+        this.events = events;
     }
 
     /** Active (non-archived) definitions for an entity, in display order -- what the form needs. */
@@ -77,7 +82,7 @@ public class CustomFieldService {
      * among custom fields for the entity (across archived rows too -- see the
      * repository); (3) the pool for the requested data type must have a free slot.
      *
-     * The advisory lock serialises allocation per entity type, so two concurrent
+     * The advisory lock serialises field creation per entity type, so two concurrent
      * creations can't read the same free slot and both claim it. It is held for the
      * transaction and released on commit. Serialising is free in practice -- creating a
      * custom field is an admin action a few times a day -- and it avoids the alternative
@@ -95,7 +100,7 @@ public class CustomFieldService {
             throw new BadRequestException(ErrorCode.VALIDATION_ERROR,
                     request.dataType() + " cannot be the type of a custom field");
         }
-        lockSlotAllocation(entityType);
+        lockEntityFields(entityType);
 
         String fieldKey = request.fieldKey();
         boolean reserved = standardFields.reservedKeysFor(entityType).stream()
@@ -111,7 +116,9 @@ public class CustomFieldService {
         CustomFieldDefinition definition = new CustomFieldDefinition(
                 entityType, request.fieldKey(), request.label(),
                 request.dataType(), columnName, request.required(), request.sortOrder());
-        return repository.save(definition);
+        CustomFieldDefinition saved = repository.save(definition);
+        events.publishEvent(new CustomFieldCreated(entityType, columnName, request.required()));
+        return saved;
     }
 
     /**
@@ -143,9 +150,11 @@ public class CustomFieldService {
     /**
      * Transaction-scoped advisory lock, released automatically on commit or rollback.
      * RLS doesn't scope advisory locks, so the key names the tenant: tenants don't wait on
-     * each other. A hash collision only serialises two unrelated creations.
+     * each other. A hash collision only serialises two unrelated creations. Role saves
+     * take it too, so they can't miss a required field being created.
      */
-    private void lockSlotAllocation(EntityType entityType) {
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void lockEntityFields(EntityType entityType) {
         jdbcClient.sql("select pg_advisory_xact_lock(?, ?)")
                 .param(SLOT_LOCK_NAMESPACE)
                 .param((TenantContext.require() + ":" + entityType.name()).hashCode())

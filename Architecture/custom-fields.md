@@ -281,14 +281,19 @@ writes to *different* custom fields compose instead of clobbering each other.
 Creating a definition also claims a physical column. `CustomFieldService.create`:
 
 1. Takes a transaction-scoped Postgres advisory lock per tenant and entity type
-   (`pg_advisory_xact_lock(0x5107, (tenant + ":" + entityType).hashCode())`), released on
-   commit. RLS doesn't scope advisory locks, so the key names the tenant.
+   (`lockEntityFields`: `pg_advisory_xact_lock(0x5107, (tenant + ":" + entityType).hashCode())`),
+   released on commit. RLS doesn't scope advisory locks, so the key names the tenant.
+   Role saves take the same lock, for every entity type, so a role can't miss a required
+   field being created (`roles-and-permissions.md` §3.8).
 2. Rejects a key that collides with a reserved key (built-in field or `id`/`createdAt`/
    `updatedAt`) → 409, or one already used by another custom field → 409.
 3. Allocates the **lowest free slot** in the pool matching `data_type`, so allocation stays
    dense and gaps left by purges are refilled. Pool full → 409
    `CustomFieldSlotsExhaustedException`.
 4. Saves. `uq_cfd_column` and `ck_cfd_type_matches_slot` remain the backstop.
+5. Publishes `CustomFieldCreated(entityType, columnName, required)`. `roles` listens,
+   synchronously and in this transaction, and grants a required field to the roles that
+   hold Create. The event keeps `customFields` from knowing `roles` exists.
 
 The advisory lock is preferred over catch-and-retry on the unique violation: a constraint
 violation marks the transaction rollback-only, so a retry needs a `REQUIRES_NEW` attempt
@@ -308,6 +313,9 @@ nothing — creating a custom field is an admin action a few times a day.
    delete the definition row, releasing both `field_key` and `column_name`. Needs a native
    UPDATE with the column name interpolated: safe, because the name comes from the
    regex-constrained catalog, but validate it against `CustomFieldSlots` before emitting.
+   **It must also reset the slot's `_read` and `_edit` pair to `false` on every role, in the
+   same transaction.** Otherwise the next field to take the slot inherits the old field's
+   grants (`roles-and-permissions.md` §6.2).
 
 There is no separate scrub stage any more — nulling one typed column *is* the scrub, and
 it is cheap enough to do synchronously. (Under jsonb this needed an async job to strip a
@@ -364,6 +372,10 @@ and unknown values.
 purge + slot reclamation; picklist types and the `config` column; definition caching;
 per-field filterable flag and its index management.
 
+**When a definition becomes editable:** switching `required` on, or un-archiving a field,
+must publish `CustomFieldCreated` too, or a role with Create is left unable to fill the
+field in (`roles-and-permissions.md` §6.4).
+
 **Known limitations:**
 
 - **Pool exhaustion is a hard product limit.** 40 text / 25 number / 25 boolean / 10 date
@@ -415,15 +427,17 @@ promoted). Mature CRM platforms converge on pools or real DDL for this reason.
   have the entity implement `RecordEntity`, embed `CustomFieldSlots` and carry
   `@DynamicUpdate`; add a `StandardFieldProvider` (and list it in
   `StandardFieldProvidersTest`, which fails for a type without one); serve it from a
-  `Map`-in/`Map`-out controller over `RecordMapper`. No `customFields`-side changes.
+  `Map`-in/`Map`-out controller over `RecordMapper`; give it a permission table
+  (`roles-and-permissions.md` §10). No `customFields`-side changes.
   Contacts and deals were added exactly this way. A foreign key to another record is
   declared with `FieldDescriptor.reference(...)`: the schema exposes its target as
   `referenceTo`, and the entity service translates the FK violation (see `DealService`).
 - **New field type:** add to `FieldDataType` with its pool and JSON type; extend the
   `data_type` CHECK and `ck_cfd_type_matches_slot`; add a pool to the table and regenerate
   `CustomFieldSlots` if it needs one of its own.
-- **Widen a pool:** add columns in V1, update `scripts/gen_slots.py`, regenerate. Instant
-  at the database level (nullable, no default).
+- **Widen a pool:** add columns in V1, update `scripts/gen_slots.py`, regenerate, and add
+  each new slot's pair to the permission tables (startup stops until you do). Instant at
+  the database level (nullable, no default).
 - **Type-specific rules** (picklist options, min/max, stricter length): use the existing
   `config` jsonb column; map it on the entity when first needed.
 - **Make a field filterable:** `create index concurrently` on its slot, and record the flag
