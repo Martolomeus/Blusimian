@@ -6,6 +6,9 @@ import com.blusimian.blusimian.customFields.CustomFieldService;
 import com.blusimian.blusimian.entityModel.EntityType;
 import com.blusimian.blusimian.entityModel.FieldDataType;
 import com.blusimian.blusimian.entityModel.RecordMapper;
+import com.blusimian.blusimian.picklists.EntityPicklists;
+import com.blusimian.blusimian.picklists.PicklistLookup;
+import com.blusimian.blusimian.picklists.PicklistOption;
 import com.blusimian.blusimian.platform.web.ApiError;
 import com.blusimian.blusimian.platform.web.BadRequestException;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,7 +45,10 @@ class ContactRecordTest {
         CustomFieldService customFieldService = mock(CustomFieldService.class);
         when(customFieldService.listActive(EntityType.CONTACT)).thenReturn(List.of(WORK_EMAIL));
         when(customFieldService.listAll(EntityType.CONTACT)).thenReturn(List.of(WORK_EMAIL));
-        mapper = new RecordMapper(new CustomFieldDescriptors(customFieldService),
+        PicklistLookup picklists = mock(PicklistLookup.class);
+        when(picklists.forEntity(EntityType.CONTACT)).thenReturn(new EntityPicklists(Map.of("salutation",
+                List.of(new PicklistOption("mr", "Mr.", true), new PicklistOption("dr", "Dr.", true)))));
+        mapper = new RecordMapper(new CustomFieldDescriptors(customFieldService), picklists,
                 JsonMapper.builder().build());
         provider = new ContactStandardFieldProvider();
     }
@@ -67,12 +73,12 @@ class ContactRecordTest {
 
     @Test
     void readShapeCarriesEveryBuiltInFieldAndTheCustomOnesSideBySide() {
-        Contact contact = contact(values("salutation", "Dr.", "firstName", "Ada", "lastName", "Lovelace",
+        Contact contact = contact(values("salutation", "dr", "firstName", "Ada", "lastName", "Lovelace",
                 "email", "ada@example.test", "countryCode", "GB", "work_email", "ada@work.test"));
 
         Map<String, Object> record = mapper.toRecord(contact, provider);
 
-        assertThat(record).containsEntry("salutation", "Dr.")
+        assertThat(record).containsEntry("salutation", "dr")
                 .containsEntry("firstName", "Ada")
                 .containsEntry("lastName", "Lovelace")
                 .containsEntry("email", "ada@example.test")
@@ -106,6 +112,13 @@ class ContactRecordTest {
         assertThatThrownBy(() -> contact(values("firstName", "Ada", "lastName", "Lovelace", "work_email", "nope")))
                 .isInstanceOf(BadRequestException.class)
                 .satisfies(e -> assertThat(invalidFields(e)).containsExactly("work_email"));
+    }
+
+    @Test
+    void salutationIsACodeNotTheLabel() {
+        assertThatThrownBy(() -> contact(values("firstName", "Ada", "lastName", "Lovelace", "salutation", "Dr.")))
+                .isInstanceOf(BadRequestException.class)
+                .satisfies(e -> assertThat(invalidFields(e)).containsExactly("salutation"));
     }
 
     @Test

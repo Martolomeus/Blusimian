@@ -61,12 +61,12 @@ The brief left this open. A generic `picklists` + `picklist_values` pair looks r
 | Layout assignments hang off the value | The FK guarantees it | The same gap |
 | Rename without touching users | Yes, references are by id | Yes |
 | Unique within the list | `(tenant_id, name)` | `(tenant_id, picklist_id, label)` |
-| Serves custom picklist fields later | No | **Less than it seems.** A slot can't carry an FK (`custom-objects-architecture.md` §14), and field options are planned for the `config` column (`custom-fields.md` §2) |
-| Serves `Company.type`, `industry` | No | Not today. They're free-text columns; a picklist there is its own decision |
+| Serves custom picklist fields | No | **Built separately.** Picklists are `app.picklist_values`, keyed by entity type and field key with no parent table, not the `config` column (`Architecture/picklists.md`). A slot can't carry an FK (`custom-objects-architecture.md` §14) |
+| Serves `Company.type`, `industry` | No | They're picklists now, in `app.picklist_values` (`picklists.md` §8). Job titles still keep their own table: other rows point at them (`picklists.md` §2.2) |
 
 So a generic table's one real, FK-backed consumer would be job titles, and they'd lose integrity in exchange. This is the "one true lookup table" trade, and the codebase has consistently chosen the opposite (`ck_cfd_type_matches_slot`, composite FKs: "unrepresentable, not merely discouraged").
 
-If custom picklist fields are built later, they're free to use their own design. Nothing here blocks it.
+Picklists have since been built with their own design (`Architecture/picklists.md`), and that spec reaches the same rule: anything other rows point at gets its own table.
 
 ---
 

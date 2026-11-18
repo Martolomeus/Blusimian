@@ -6,6 +6,10 @@ import com.blusimian.blusimian.customFields.CustomFieldService;
 import com.blusimian.blusimian.entityModel.EntityType;
 import com.blusimian.blusimian.entityModel.FieldDataType;
 import com.blusimian.blusimian.entityModel.RecordMapper;
+import com.blusimian.blusimian.picklists.EntityPicklists;
+import com.blusimian.blusimian.picklists.PicklistLookup;
+import com.blusimian.blusimian.picklists.PicklistOption;
+import com.blusimian.blusimian.platform.web.ApiError;
 import com.blusimian.blusimian.platform.web.BadRequestException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +25,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -30,7 +36,8 @@ import static org.mockito.Mockito.when;
  *
  * The custom side is wired through the real CustomFieldDescriptors over a mocked
  * CustomFieldService, so these tests still cover the definition -> slot -> descriptor
- * resolution rather than handing RecordMapper ready-made descriptors.
+ * resolution rather than handing RecordMapper ready-made descriptors. Picklist options
+ * come from a stubbed PicklistLookup.
  *
  * Lives in the companies package so it can reach Company's protected no-arg constructor,
  * the same way JPA does.
@@ -46,17 +53,28 @@ class RecordMapperTest {
     private static final CustomFieldDefinition SEATS =
             new CustomFieldDefinition(EntityType.COMPANY, "seats", "Seats",
                     FieldDataType.NUMBER, "cf_num_01", false, 30);
+    private static final CustomFieldDefinition REGION =
+            new CustomFieldDefinition(EntityType.COMPANY, "region", "Region",
+                    FieldDataType.PICKLIST, "cf_text_02", false, 40);
 
     private RecordMapper mapper;
+    private PicklistLookup picklists;
     private CompanyStandardFieldProvider provider;
 
     @BeforeEach
     void setUp() {
         CustomFieldService customFieldService = mock(CustomFieldService.class);
-        List<CustomFieldDefinition> definitions = List.of(LEAD_SOURCE, RENEWAL, SEATS);
+        List<CustomFieldDefinition> definitions = List.of(LEAD_SOURCE, RENEWAL, SEATS, REGION);
         when(customFieldService.listActive(any())).thenReturn(definitions);
         when(customFieldService.listAll(any())).thenReturn(definitions);
-        mapper = new RecordMapper(new CustomFieldDescriptors(customFieldService),
+        picklists = mock(PicklistLookup.class);
+        when(picklists.forEntity(EntityType.COMPANY)).thenReturn(new EntityPicklists(Map.of(
+                "industry", List.of(
+                        new PicklistOption("technology", "Technology", true),
+                        new PicklistOption("retail", "Retail", true),
+                        new PicklistOption("shipping", "Shipping", false)),
+                "region", List.of(new PicklistOption("emea", "EMEA", true)))));
+        mapper = new RecordMapper(new CustomFieldDescriptors(customFieldService), picklists,
                 JsonMapper.builder().build());
         provider = new CompanyStandardFieldProvider();
     }
@@ -73,6 +91,10 @@ class RecordMapperTest {
             map.put((String) keysAndValues[i], keysAndValues[i + 1]);
         }
         return map;
+    }
+
+    private static List<ApiError.FieldError> errors(Throwable e) {
+        return ((BadRequestException) e).details();
     }
 
     @Test
@@ -93,22 +115,22 @@ class RecordMapperTest {
 
     @Test
     void partialUpdateTouchesOnlyTheKeysSent() {
-        Company company = company(values("name", "Acme", "industry", "Software", "lead_source", "Web"));
+        Company company = company(values("name", "Acme", "legalName", "Acme Inc.", "lead_source", "Web"));
 
-        mapper.apply(company, provider, values("industry", "Hardware"));
+        mapper.apply(company, provider, values("legalName", "Acme B.V."));
 
         assertThat(company.getName()).isEqualTo("Acme");
-        assertThat(company.getIndustry()).isEqualTo("Hardware");
+        assertThat(company.getLegalName()).isEqualTo("Acme B.V.");
         assertThat(company.getSlots().getCfText01()).isEqualTo("Web");
     }
 
     @Test
     void explicitNullClearsAFieldWhileAbsenceLeavesIt() {
-        Company company = company(values("name", "Acme", "industry", "Software", "lead_source", "Web"));
+        Company company = company(values("name", "Acme", "legalName", "Acme Inc.", "lead_source", "Web"));
 
-        mapper.apply(company, provider, values("industry", null));
+        mapper.apply(company, provider, values("legalName", null));
 
-        assertThat(company.getIndustry()).isNull();
+        assertThat(company.getLegalName()).isNull();
         assertThat(company.getSlots().getCfText01()).isEqualTo("Web");
     }
 
@@ -136,12 +158,12 @@ class RecordMapperTest {
     @Test
     void requiredIsCheckedAgainstTheMergedResultNotThePayload() {
         // absent on create -> missing
-        assertThatThrownBy(() -> company(values("industry", "Software")))
+        assertThatThrownBy(() -> company(values("legalName", "Acme Inc.")))
                 .isInstanceOf(BadRequestException.class);
 
         Company company = company(values("name", "Acme"));
         // absent on update -> fine, the stored value still satisfies it
-        mapper.apply(company, provider, values("industry", "Software"));
+        mapper.apply(company, provider, values("legalName", "Acme Inc."));
         // explicitly blanked -> missing
         assertThatThrownBy(() -> mapper.apply(company, provider, values("name", "   ")))
                 .isInstanceOf(BadRequestException.class);
@@ -178,12 +200,84 @@ class RecordMapperTest {
 
     @Test
     void nothingIsWrittenWhenAnyFieldIsInvalid() {
-        Company company = company(values("name", "Acme", "industry", "Software"));
+        Company company = company(values("name", "Acme", "industry", "technology"));
 
         assertThatThrownBy(() -> mapper.apply(company, provider,
-                values("industry", "Hardware", "renewal_date", "not-a-date")))
+                values("industry", "retail", "renewal_date", "not-a-date")))
                 .isInstanceOf(BadRequestException.class);
 
-        assertThat(company.getIndustry()).isEqualTo("Software");
+        assertThat(company.getIndustry()).isEqualTo("technology");
+    }
+
+    @Test
+    void aPicklistFieldTakesAnActiveCode() {
+        assertThat(company(values("name", "Acme", "industry", "technology")).getIndustry()).isEqualTo("technology");
+    }
+
+    @Test
+    void aPicklistRefusesAnUnknownCodeAWrongCaseAndTheEmptyString() {
+        for (String value : List.of("software", "Technology", "")) {
+            assertThatThrownBy(() -> company(values("name", "Acme", "industry", value)))
+                    .isInstanceOf(BadRequestException.class)
+                    .satisfies(e -> assertThat(errors(e)).singleElement().satisfies(error -> {
+                        assertThat(error.field()).isEqualTo("industry");
+                        assertThat(error.reason()).isEqualTo("Not one of the options");
+                    }));
+        }
+    }
+
+    @Test
+    void anInactiveCodeIsRefusedOnCreateButKeptWhenUnchanged() {
+        assertThatThrownBy(() -> company(values("name", "Acme", "industry", "shipping")))
+                .isInstanceOf(BadRequestException.class);
+
+        // A record that held it before it was deactivated, sent back whole (merge patch).
+        Company company = company(values("name", "Acme"));
+        company.setIndustry("shipping");
+        mapper.apply(company, provider, values("name", "Acme Renamed", "industry", "shipping"));
+        assertThat(company.getName()).isEqualTo("Acme Renamed");
+        assertThat(company.getIndustry()).isEqualTo("shipping");
+
+        // A different inactive or unknown code is still refused.
+        company.setIndustry("technology");
+        assertThatThrownBy(() -> mapper.apply(company, provider, values("industry", "shipping")))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void nullClearsAPicklistWithoutALookup() {
+        Company company = company(values("name", "Acme"));
+        company.setIndustry("technology");
+
+        mapper.apply(company, provider, values("industry", null));
+
+        assertThat(company.getIndustry()).isNull();
+        verify(picklists, never()).forEntity(any());
+    }
+
+    @Test
+    void noLookupWhenNoPicklistFieldIsWritten() {
+        company(values("name", "Acme", "legalName", "Acme Inc.", "lead_source", "Web"));
+
+        verify(picklists, never()).forEntity(any());
+    }
+
+    @Test
+    void aCustomPicklistIsCheckedTheSameWay() {
+        assertThat(company(values("name", "Acme", "region", "emea")).getSlots().getCfText02()).isEqualTo("emea");
+        // Keys match case-insensitively, codes don't.
+        assertThat(company(values("name", "Acme", "REGION", "emea")).getSlots().getCfText02()).isEqualTo("emea");
+        assertThatThrownBy(() -> company(values("name", "Acme", "region", "EMEA")))
+                .isInstanceOf(BadRequestException.class)
+                .satisfies(e -> assertThat(errors(e)).singleElement()
+                        .satisfies(error -> assertThat(error.field()).isEqualTo("region")));
+    }
+
+    @Test
+    void aPicklistValueOfTheWrongJsonTypeIsOneError() {
+        assertThatThrownBy(() -> company(values("name", "Acme", "industry", 7)))
+                .isInstanceOf(BadRequestException.class)
+                .satisfies(e -> assertThat(errors(e)).singleElement()
+                        .satisfies(error -> assertThat(error.reason()).isEqualTo("Expected PICKLIST")));
     }
 }

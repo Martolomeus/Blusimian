@@ -2,6 +2,9 @@ package com.blusimian.blusimian.entitySchema.dto;
 
 import com.blusimian.blusimian.entityModel.EntityType;
 import com.blusimian.blusimian.entityModel.FieldDataType;
+import com.blusimian.blusimian.picklists.PicklistOption;
+
+import java.util.List;
 
 /**
  * One entry in the schema's `fields` dictionary -- the uniform shape that makes a
@@ -17,6 +20,9 @@ import com.blusimian.blusimian.entityModel.FieldDataType;
  *
  * `referenceTo` is set only on a REFERENCE field: the entity type whose record id the
  * value holds (a deal's customerId -> COMPANY), so the client knows what to look up.
+ *
+ * `options` is set only on a PICKLIST field: its options in display order, inactive ones
+ * included so a record holding one can still be labelled.
  */
 public record SchemaFieldResponse(
         String key,
@@ -24,6 +30,7 @@ public record SchemaFieldResponse(
         FieldDataType dataType,
         boolean required,
         Integer maxLength,
-        EntityType referenceTo
+        EntityType referenceTo,
+        List<PicklistOption> options
 ) {
 }

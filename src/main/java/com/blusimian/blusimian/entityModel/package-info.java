@@ -1,9 +1,10 @@
 /**
  * The entity model: the vocabulary every entity-level feature is described in, and the
  * machinery that serves any CRM entity as one flat field map and writes it back from a
- * partial one. This is the project's foundation: every feature depends on it. The one
- * exception to it depending on nothing of ours is RecordMapper (and EntityFieldDictionary),
- * which use customFields' CustomFieldDescriptors to read custom fields.
+ * partial one. This is the project's foundation: every feature depends on it. The
+ * exceptions to it depending on nothing of ours: RecordMapper (and EntityFieldDictionary)
+ * use customFields' CustomFieldDescriptors to read custom fields, and RecordMapper uses
+ * picklists' PicklistLookup to check a PICKLIST value.
  *
  * Named for the model rather than for records because half of it is broader than records:
  * entityLayouts arranges fields without ever serving one, and it still needs EntityType

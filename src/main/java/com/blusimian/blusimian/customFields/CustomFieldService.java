@@ -9,6 +9,7 @@ import com.blusimian.blusimian.entityModel.EntityType;
 import com.blusimian.blusimian.entityModel.FieldDataType;
 import com.blusimian.blusimian.entityModel.StandardFieldRegistry;
 import com.blusimian.blusimian.platform.tenancy.TenantContext;
+import com.blusimian.blusimian.platform.web.ApiError;
 import com.blusimian.blusimian.platform.web.BadRequestException;
 import com.blusimian.blusimian.platform.web.ErrorCode;
 import org.springframework.context.ApplicationEventPublisher;
@@ -92,6 +93,9 @@ public class CustomFieldService {
      *
      * The DB constraints are still the backstop: uq_custom_field_key, uq_cfd_column and
      * ck_cfd_type_matches_slot all hold independently of anything decided here.
+     *
+     * A PICKLIST field's options travel on CustomFieldCreated; picklists stores them in this
+     * transaction, so an option it refuses rolls the field back too.
      */
     @Transactional
     public CustomFieldDefinition create(EntityType entityType, CustomFieldDefinitionRequest request) {
@@ -99,6 +103,16 @@ public class CustomFieldService {
         if (request.dataType().pool() == null) {
             throw new BadRequestException(ErrorCode.VALIDATION_ERROR,
                     request.dataType() + " cannot be the type of a custom field");
+        }
+        List<CustomFieldOptionRequest> options = request.options() == null ? List.of() : request.options();
+        boolean picklist = request.dataType() == FieldDataType.PICKLIST;
+        if (picklist && options.isEmpty()) {
+            throw new BadRequestException(ErrorCode.VALIDATION_ERROR, "A PICKLIST field needs at least one option",
+                    List.of(new ApiError.FieldError("options", "Required")));
+        }
+        if (!picklist && !options.isEmpty()) {
+            throw new BadRequestException(ErrorCode.VALIDATION_ERROR, "Only a PICKLIST field has options",
+                    List.of(new ApiError.FieldError("options", "Only a PICKLIST field has options")));
         }
         lockEntityFields(entityType);
 
@@ -117,7 +131,8 @@ public class CustomFieldService {
                 entityType, request.fieldKey(), request.label(),
                 request.dataType(), columnName, request.required(), request.sortOrder());
         CustomFieldDefinition saved = repository.save(definition);
-        events.publishEvent(new CustomFieldCreated(entityType, columnName, request.required()));
+        events.publishEvent(new CustomFieldCreated(entityType, saved.getFieldKey(), columnName,
+                request.required(), options));
         return saved;
     }
 

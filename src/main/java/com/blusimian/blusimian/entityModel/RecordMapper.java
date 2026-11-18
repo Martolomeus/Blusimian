@@ -1,6 +1,8 @@
 package com.blusimian.blusimian.entityModel;
 
 import com.blusimian.blusimian.customFields.CustomFieldDescriptors;
+import com.blusimian.blusimian.picklists.EntityPicklists;
+import com.blusimian.blusimian.picklists.PicklistLookup;
 import com.blusimian.blusimian.platform.web.ApiError;
 import com.blusimian.blusimian.platform.web.BadRequestException;
 import com.blusimian.blusimian.platform.web.ErrorCode;
@@ -26,7 +28,8 @@ import java.util.Set;
  *
  *   * toRecord / toRecords -- read: id + every field's value + timestamps.
  *   * apply -- write: validate + convert + merge (JSON Merge Patch: present sets, null
- *     clears, absent leaves).
+ *     clears, absent leaves). A PICKLIST value must be one of its field's codes
+ *     (PicklistLookup), for standard and custom fields alike.
  */
 @Component
 public class RecordMapper {
@@ -39,10 +42,12 @@ public class RecordMapper {
     public static final Set<String> META_KEYS = Set.of(ID_KEY, CREATED_AT_KEY, UPDATED_AT_KEY);
 
     private final CustomFieldDescriptors customFields;
+    private final PicklistLookup picklists;
     private final JsonMapper jsonMapper;
 
-    public RecordMapper(CustomFieldDescriptors customFields, JsonMapper jsonMapper) {
+    public RecordMapper(CustomFieldDescriptors customFields, PicklistLookup picklists, JsonMapper jsonMapper) {
         this.customFields = customFields;
+        this.picklists = picklists;
         this.jsonMapper = jsonMapper;
     }
 
@@ -92,6 +97,7 @@ public class RecordMapper {
         // 1. Resolve values to correct data types and reject null
         List<ApiError.FieldError> errors = new ArrayList<>();
         Map<FieldDescriptor<T>, Object> writes = new LinkedHashMap<>();
+        Map<String, FieldDescriptor<T>> picklistWrites = new LinkedHashMap<>();   // key as sent -> field
         values.forEach((key, value) -> {
             // The read shape carries id/createdAt/updatedAt, so a client that GETs a
             // record, edits a field and sends the whole thing back hands them to us.
@@ -106,20 +112,36 @@ public class RecordMapper {
             }
             try {
                 Object converted = convert(field, value);
+                boolean valid = true;
                 if (tooLong(field, converted)) {
                     errors.add(new ApiError.FieldError(key, "Longer than " + field.maxLength() + " characters"));
+                    valid = false;
                 }
                 if (!field.dataType().wellFormed(converted)) {
                     errors.add(new ApiError.FieldError(key, "Not a valid " + field.dataType()));
+                    valid = false;
                 }
                 writes.put(field, converted);
+                if (valid && converted != null && field.dataType() == FieldDataType.PICKLIST) {
+                    picklistWrites.put(key, field);
+                }
             } catch (IllegalArgumentException | JacksonException e) {
                 errors.add(new ApiError.FieldError(key, "Expected " + field.dataType()));
                 writes.put(field, value);   // never written; keeps it from also counting as missing
             }
         });
 
-        // 2. Required: what's sent, else what the entity already holds.
+        // 2. Picklists: one lookup, and only when the request sets a picklist field.
+        if (!picklistWrites.isEmpty()) {
+            EntityPicklists options = picklists.forEntity(provider.entityType());
+            picklistWrites.forEach((key, field) -> {
+                if (!options.allows(field.key(), writes.get(field), field.getter().apply(entity))) {
+                    errors.add(new ApiError.FieldError(key, "Not one of the options"));
+                }
+            });
+        }
+
+        // 3. Required: what's sent, else what the entity already holds.
         for (FieldDescriptor<T> field : fieldsByKey.values()) {
             Object merged = writes.containsKey(field) ? writes.get(field) : field.getter().apply(entity);
             if (field.required() && isBlank(merged)) {
@@ -132,7 +154,7 @@ public class RecordMapper {
                     "Invalid fields for " + provider.entityType(), errors);
         }
 
-        // 3. Write: the entity's own column setter for built-ins, the slot's setter for
+        // 4. Write: the entity's own column setter for built-ins, the slot's setter for
         // custom fields. Only the keys actually sent are written, so @DynamicUpdate emits
         // an UPDATE touching just those columns.
         writes.forEach((field, value) -> field.setter().accept(entity, value));

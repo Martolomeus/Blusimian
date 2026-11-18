@@ -1,7 +1,7 @@
 # Multitenancy — Tenant Isolation with Row-Level Security — Architecture Reference
 
 **Status:** Implemented & verified (§15) · **Scope:** tenants, users, `tenant_id` + RLS on every tenant-scoped table, binding the request's tenant to the database, minimal username/password login
-**Last updated:** 2026-10-31 · **Builds on:** the `app`/`public` schema split in `V1__init.sql`, `Architecture/custom-fields.md`, `Architecture/entity-layouts.md`
+**Last updated:** 2026-11-08 · **Builds on:** the `app`/`public` schema split in `V1__init.sql`, `Architecture/custom-fields.md`, `Architecture/entity-layouts.md`
 **Code:** `src/main/resources/db/migration/V1__init.sql`, `platform/tenancy`, `platform/security`, `tenants`, `users`, `auth` packages; `docker/`, `docker-compose.yml`, `Makefile`, `application.properties`; `Frontend/src/features/auth`
 
 > Tenant data lives in `app`, global reference data in `public`. This is the tenant layer
@@ -134,7 +134,7 @@ alter database blusimian owner to blusimian_owner;
 
 `blusimian_owner` becomes the database owner on purpose. On Postgres 15+ the `public`
 schema belongs to `pg_database_owner`, so the database owner may create in it, and V1
-creates `public.iso_countries` there.
+creates `public.iso_countries` and `public.standard_picklist_values` there.
 
 **Grants live in V1**, next to the tables they cover (§5.3). They're versioned with the
 schema:
@@ -143,6 +143,7 @@ schema:
 grant usage on schema app to blusimian_app;
 grant usage on schema public to blusimian_app;           -- see make db-reset below
 grant select on public.iso_countries to blusimian_app;   -- global, read-only
+grant select on public.standard_picklist_values to blusimian_app;   -- global, read-only
 -- each tenant table: exactly select, insert, update, delete, beside its policy (§5.3)
 ```
 
@@ -192,7 +193,9 @@ migrate, so this changes nothing.
 
 Everything below is in `V1__init.sql`, following the single-migration dev-phase rule.
 Order inside V1: schema and its grants → collation (§5.6) → `current_tenant_id` →
-`tenants` → `users` → `iso_countries` → CRM tables → layout tables → `find_login_user`.
+`tenants` → `users` → `standard_picklist_values` → `iso_countries` → CRM tables →
+`custom_field_definitions` → `picklist_values` → layout tables → roles and permissions →
+`find_login_user`.
 Each table's grant sits beside its policy.
 
 ### 5.1 `app.tenants` and `app.users`
@@ -467,6 +470,7 @@ create collation app.case_insensitive (provider = icu, locale = 'und-u-ks-level2
 | `app.company_contacts` | ✓ | `(tenant_id, id)` | `contact_id` → contacts; `company_id` → companies | all four |
 | `app.deals` | ✓ | `(tenant_id, id)` | `customer_id` → companies, named `fk_deals_customer_id` | all four |
 | `app.custom_field_definitions` | ✓ | `(tenant_id, id)` | — | all four |
+| `app.picklist_values` | ✓ | `(tenant_id, id)` | — (records hold a code, checked by `RecordMapper`: `picklists.md` §4.4) | all four |
 | `app.entity_layouts` | ✓ | `(tenant_id, id)` | — | all four |
 | `app.entity_layout_sections` | ✓ | `(tenant_id, id)` | `layout_id` → entity_layouts, cascade | all four |
 | `app.entity_layout_section_fields` | ✓ | `(tenant_id, id)` | `section_id` → sections, cascade | all four |
@@ -475,6 +479,7 @@ create collation app.case_insensitive (provider = icu, locale = 'und-u-ks-level2
 | `app.app_permissions` | ✓ | `(tenant_id, id)` | `role_id` → roles, cascade | all four |
 | `app.contact_permissions`, `app.company_permissions`, `app.deal_permissions` | ✓ | `(tenant_id, id)` | `role_id` → roles, cascade | all four |
 | `public.iso_countries` | — (global) | `(code)` | — | select only; no RLS |
+| `public.standard_picklist_values` | — (global) | `(entity_type, field_key, code)` | — | select only; no RLS. Copied into `app.picklist_values` at provisioning (§10) |
 
 "All four" means select, insert, update and delete, never more (§5.3).
 
@@ -575,6 +580,8 @@ users/      User, UserRepository, UserService, UserController, dto/CreateUserReq
 entityLayouts/
   DefaultLayoutTemplates              the old V1 layout seed, as Java
   DefaultLayoutsInitializer           implements TenantInitializer
+picklists/
+  StandardPicklistsInitializer        implements TenantInitializer (picklists.md §8.3)
 ```
 
 CRM slices depend on `platform/tenancy` only where they need the id: `CustomFieldService`
@@ -1255,6 +1262,15 @@ fields) becomes `DefaultLayoutTemplates`, a set of Java constants.
   The only place that mentions one is `EntitySchemaServiceTest`, where it's an arbitrary
   constant on a mocked DTO, so nothing breaks.
 
+### 10.2a Standard picklists are copied in SQL
+
+`StandardPicklistsInitializer` (package `picklists`) copies `public.standard_picklist_values`
+into `app.picklist_values` with one `insert … select`. `tenant_id` comes from the column
+default, and the policy's `with check` confirms it. The tenant row is still a pending JPA
+insert at that point and `picklist_values.tenant_id` references it, so the initializer
+flushes first: Hibernate doesn't flush for a `JdbcClient` statement. Details in
+`picklists.md` §8.3.
+
 ### 10.3 Demo tenants (dev)
 
 `DemoTenantSeeder` is an `ApplicationRunner` (it doesn't matter that the port is already
@@ -1263,7 +1279,7 @@ fixed ids if they're missing:
 
 | Tenant | Fixed id | Login | Extras |
 |---|---|---|---|
-| Acme | `10000000-0000-0000-0000-000000000001` | `alice` / `alice` | `lead_source` custom field on COMPANY, placed in the default company layout |
+| Acme | `10000000-0000-0000-0000-000000000001` | `alice` / `alice` | `lead_source` custom `PICKLIST` on COMPANY (Web, Referral, Event, Partner, Cold outreach, Other), placed in the default company layout |
 | Globex | `10000000-0000-0000-0000-000000000002` | `bob` / `bob` | none |
 
 "Missing" is checked under RLS: `TenantContext.callAs(id, () -> tenants.existsById(id.value()))`.

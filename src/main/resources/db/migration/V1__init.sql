@@ -3,7 +3,7 @@
 -- V2__something.sql -- you never edit a migration that has already run.
 --
 -- Schema layout:
---   * public = global reference data (iso_countries).
+--   * public = global reference data (iso_countries, standard_picklist_values).
 --   * app    = tenant-scoped, RLS on every table.
 --
 -- Runs as blusimian_owner, which owns every object here. The app connects as
@@ -101,6 +101,87 @@ create policy tenant_isolation on app.users
     with check (tenant_id = (select app.current_tenant_id()));
 
 grant select, insert, update, delete on app.users to blusimian_app;
+
+-- --------------------------------------------------------------------------
+-- public.standard_picklist_values  (global reference data; no tenant, no RLS)
+--   The values a new tenant's standard picklists start with, copied into
+--   app.picklist_values at provisioning. After that the tenant owns them.
+--   StandardPicklistsVerifier holds every (entity_type, field_key) here to a
+--   standard PICKLIST field, so neither column has a CHECK.
+-- --------------------------------------------------------------------------
+create table public.standard_picklist_values
+(
+    entity_type varchar(50)  not null,
+    field_key   varchar(100) collate app.case_insensitive not null,
+    code        varchar(50)  not null
+        constraint ck_spv_code check (code ~ '^[a-z0-9]+(_[a-z0-9]+)*$'),
+    label       varchar(100) collate app.case_insensitive not null,
+    sort_order  int          not null,
+
+    constraint pk_standard_picklist_values primary key (entity_type, field_key, code),
+    constraint uq_standard_picklist_values_label unique (entity_type, field_key, label)
+);
+
+grant select on public.standard_picklist_values to blusimian_app;
+
+insert into public.standard_picklist_values (entity_type, field_key, code, label, sort_order)
+values ('COMPANY', 'type', 'prospect', 'Prospect', 1),
+       ('COMPANY', 'type', 'customer', 'Customer', 2),
+       ('COMPANY', 'type', 'partner', 'Partner', 3),
+       ('COMPANY', 'type', 'reseller', 'Reseller', 4),
+       ('COMPANY', 'type', 'vendor', 'Vendor', 5),
+       ('COMPANY', 'type', 'competitor', 'Competitor', 6),
+       ('COMPANY', 'type', 'other', 'Other', 7),
+
+       ('COMPANY', 'industry', 'agriculture', 'Agriculture', 1),
+       ('COMPANY', 'industry', 'apparel', 'Apparel', 2),
+       ('COMPANY', 'industry', 'banking', 'Banking', 3),
+       ('COMPANY', 'industry', 'biotechnology', 'Biotechnology', 4),
+       ('COMPANY', 'industry', 'chemicals', 'Chemicals', 5),
+       ('COMPANY', 'industry', 'communications', 'Communications', 6),
+       ('COMPANY', 'industry', 'construction', 'Construction', 7),
+       ('COMPANY', 'industry', 'consulting', 'Consulting', 8),
+       ('COMPANY', 'industry', 'education', 'Education', 9),
+       ('COMPANY', 'industry', 'electronics', 'Electronics', 10),
+       ('COMPANY', 'industry', 'energy', 'Energy', 11),
+       ('COMPANY', 'industry', 'engineering', 'Engineering', 12),
+       ('COMPANY', 'industry', 'entertainment', 'Entertainment', 13),
+       ('COMPANY', 'industry', 'environmental', 'Environmental', 14),
+       ('COMPANY', 'industry', 'finance', 'Finance', 15),
+       ('COMPANY', 'industry', 'food_beverage', 'Food & Beverage', 16),
+       ('COMPANY', 'industry', 'government', 'Government', 17),
+       ('COMPANY', 'industry', 'healthcare', 'Healthcare', 18),
+       ('COMPANY', 'industry', 'hospitality', 'Hospitality', 19),
+       ('COMPANY', 'industry', 'insurance', 'Insurance', 20),
+       ('COMPANY', 'industry', 'machinery', 'Machinery', 21),
+       ('COMPANY', 'industry', 'manufacturing', 'Manufacturing', 22),
+       ('COMPANY', 'industry', 'media', 'Media', 23),
+       ('COMPANY', 'industry', 'not_for_profit', 'Not for Profit', 24),
+       ('COMPANY', 'industry', 'real_estate', 'Real Estate', 25),
+       ('COMPANY', 'industry', 'recreation', 'Recreation', 26),
+       ('COMPANY', 'industry', 'retail', 'Retail', 27),
+       ('COMPANY', 'industry', 'shipping', 'Shipping', 28),
+       ('COMPANY', 'industry', 'technology', 'Technology', 29),
+       ('COMPANY', 'industry', 'telecommunications', 'Telecommunications', 30),
+       ('COMPANY', 'industry', 'transportation', 'Transportation', 31),
+       ('COMPANY', 'industry', 'utilities', 'Utilities', 32),
+       ('COMPANY', 'industry', 'other', 'Other', 33),
+
+       ('COMPANY', 'employeeRange', '1_10', '1–10', 1),
+       ('COMPANY', 'employeeRange', '11_50', '11–50', 2),
+       ('COMPANY', 'employeeRange', '51_200', '51–200', 3),
+       ('COMPANY', 'employeeRange', '201_500', '201–500', 4),
+       ('COMPANY', 'employeeRange', '501_1000', '501–1,000', 5),
+       ('COMPANY', 'employeeRange', '1001_5000', '1,001–5,000', 6),
+       ('COMPANY', 'employeeRange', '5001_10000', '5,001–10,000', 7),
+       ('COMPANY', 'employeeRange', '10001_plus', '10,001+', 8),
+
+       ('CONTACT', 'salutation', 'mr', 'Mr.', 1),
+       ('CONTACT', 'salutation', 'ms', 'Ms.', 2),
+       ('CONTACT', 'salutation', 'mrs', 'Mrs.', 3),
+       ('CONTACT', 'salutation', 'mx', 'Mx.', 4),
+       ('CONTACT', 'salutation', 'dr', 'Dr.', 5),
+       ('CONTACT', 'salutation', 'prof', 'Prof.', 6);
 
 -- --------------------------------------------------------------------------
 -- public.iso_countries  (global reference data; not tenant-scoped, no RLS)
@@ -457,7 +538,7 @@ create table app.companies
     type                         varchar(100),
     industry                     varchar(100),
     description                  text,
-    employee_range               varchar(30),
+    employee_range               varchar(50),
     website                      text,
     phone                        varchar(50),
     phone_alt                    varchar(50),
@@ -709,7 +790,7 @@ create table app.custom_field_definitions
 
     data_type   varchar(30)  not null
         constraint ck_cfd_data_type
-            check (data_type in ('TEXT', 'URL', 'PHONE', 'EMAIL', 'NUMBER', 'BOOLEAN', 'DATE', 'LONGTEXT')),
+            check (data_type in ('TEXT', 'URL', 'PHONE', 'EMAIL', 'PICKLIST', 'NUMBER', 'BOOLEAN', 'DATE', 'LONGTEXT')),
 
     -- Which physical slot on the entity's table holds this field's values, e.g.
     -- 'cf_text_03'. Assigned by the service from the first free slot of the
@@ -723,9 +804,10 @@ create table app.custom_field_definitions
     required    boolean      not null default false,
     sort_order  int          not null default 0,
 
-    -- type-specific rules (picklist options, min/max, regex, a stricter length
-    -- than the slot's own varchar(255) ...). Empty until a field type needs it;
-    -- here now so adding one needs no schema change.
+    -- type-specific rules (min/max, regex, a stricter length than the slot's
+    -- own varchar(255) ...). Empty until a field type needs it; here now so
+    -- adding one needs no schema change. Picklist options live in
+    -- app.picklist_values, not here.
     config      jsonb        not null default '{}',
 
     -- archive instead of hard delete. NULL = active.
@@ -746,6 +828,7 @@ create table app.custom_field_definitions
             when 'URL' then column_name like 'cf\_text\_%'
             when 'PHONE' then column_name like 'cf\_text\_%'
             when 'EMAIL' then column_name like 'cf\_text\_%'
+            when 'PICKLIST' then column_name like 'cf\_text\_%'
             when 'NUMBER' then column_name like 'cf\_num\_%'
             when 'BOOLEAN' then column_name like 'cf\_bool\_%'
             when 'DATE' then column_name like 'cf\_date\_%'
@@ -774,6 +857,47 @@ create policy tenant_isolation on app.custom_field_definitions
     with check (tenant_id = (select app.current_tenant_id()));
 
 grant select, insert, update, delete on app.custom_field_definitions to blusimian_app;
+
+-- --------------------------------------------------------------------------
+-- app.picklist_values
+--   The tenant's picklists, standard and custom alike: one row per value,
+--   grouped by (entity_type, field_key). Which fields are picklists is said by
+--   custom_field_definitions.data_type or the standard field's provider, so
+--   there's no parent table. Records hold the code, with no FK: RecordMapper
+--   checks it. Values are deactivated, never deleted.
+-- --------------------------------------------------------------------------
+create table app.picklist_values
+(
+    id          uuid         not null default gen_random_uuid(),
+    tenant_id   uuid         not null default app.current_tenant_id()
+        references app.tenants (id),
+    entity_type varchar(50)  not null
+        constraint ck_picklist_values_entity_type check (entity_type in ('COMPANY', 'CONTACT', 'DEAL')),
+    field_key   varchar(100) collate app.case_insensitive not null, -- standard key or custom field_key
+    code        varchar(50)  not null                               -- stored on records (write-once)
+        constraint ck_picklist_values_code check (code ~ '^[a-z0-9]+(_[a-z0-9]+)*$'),
+    label       varchar(100) collate app.case_insensitive not null,
+    sort_order  int          not null,
+    active      boolean      not null default true,
+    created_at  timestamptz  not null default now(),
+    updated_at  timestamptz  not null default now(),
+
+    constraint pk_picklist_values primary key (tenant_id, id),
+    -- Also serves both reads: all of an entity's values, and one field's.
+    constraint uq_picklist_values_code unique (tenant_id, entity_type, field_key, code),
+    -- Deferred, so one PUT can swap two labels.
+    constraint uq_picklist_values_label unique (tenant_id, entity_type, field_key, label)
+        deferrable initially deferred
+);
+
+alter table app.picklist_values enable row level security;
+
+create policy tenant_isolation on app.picklist_values
+    to blusimian_app
+    using (tenant_id = (select app.current_tenant_id()))
+    with check (tenant_id = (select app.current_tenant_id()));
+
+grant select, insert, update, delete on app.picklist_values to blusimian_app;
 
 -- --------------------------------------------------------------------------
 -- app.entity_layouts  (the "mother" row)

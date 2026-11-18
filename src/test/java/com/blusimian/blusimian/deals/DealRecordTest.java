@@ -3,6 +3,7 @@ package com.blusimian.blusimian.deals;
 import com.blusimian.blusimian.customFields.CustomFieldDescriptors;
 import com.blusimian.blusimian.customFields.CustomFieldService;
 import com.blusimian.blusimian.entityModel.RecordMapper;
+import com.blusimian.blusimian.picklists.PicklistLookup;
 import com.blusimian.blusimian.platform.web.ApiError;
 import com.blusimian.blusimian.platform.web.BadRequestException;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,7 +37,7 @@ class DealRecordTest {
     void setUp() {
         // an unstubbed mock lists no definitions: these tests need no custom fields
         mapper = new RecordMapper(new CustomFieldDescriptors(mock(CustomFieldService.class)),
-                JsonMapper.builder().build());
+                mock(PicklistLookup.class), JsonMapper.builder().build());
         provider = new DealStandardFieldProvider();
     }
 

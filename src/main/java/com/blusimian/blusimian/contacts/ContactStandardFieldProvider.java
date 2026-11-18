@@ -15,7 +15,8 @@ import java.util.List;
  * Keys are the contact's JSON property names, which for the address differ from the DB
  * columns (address_street -> street, address_country -> countryCode). The address stays
  * five flat fields: there is no composite type, so a layout places each part by its own
- * key. countryCode is typed COUNTRY so a client renders it as a country picker.
+ * key. countryCode is typed COUNTRY so a client renders it as a country picker, and
+ * salutation is a PICKLIST (a code from the tenant's list in app.picklist_values).
  *
  * firstName and lastName are required because their columns are NOT NULL. withMaxLength
  * mirrors each column's cap from V1__init.sql, so an over-long value comes back as a 400
@@ -26,7 +27,7 @@ import java.util.List;
 public class ContactStandardFieldProvider implements StandardFieldProvider<Contact> {
 
     private static final List<FieldDescriptor<Contact>> FIELDS = List.of(
-            FieldDescriptor.of("salutation", "Salutation", FieldDataType.TEXT, String.class,
+            FieldDescriptor.of("salutation", "Salutation", FieldDataType.PICKLIST, String.class,
                     Contact::getSalutation, Contact::setSalutation).withMaxLength(50),
             FieldDescriptor.of("firstName", "First Name", FieldDataType.TEXT, String.class,
                     Contact::getFirstName, Contact::setFirstName).asRequired().withMaxLength(100),

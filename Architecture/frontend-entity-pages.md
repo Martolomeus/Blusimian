@@ -1,7 +1,7 @@
 # Frontend — Schema-Driven Entity Pages — Architecture Reference
 
 **Status:** Implemented & verified · **Scope:** detail pages and create dialogs for `COMPANY`, `CONTACT`, `DEAL`
-**Last updated:** 2026-10-11 · **Stack:** Vite + React 19 + react-router 7 + @tanstack/react-query 5 + react-hook-form
+**Last updated:** 2026-11-08 · **Stack:** Vite + React 19 + react-router 7 + @tanstack/react-query 5 + react-hook-form
 **Code:** `Frontend/src/lib/entity`, `Frontend/src/components/fields`, `Frontend/src/components/entity`
 
 This is the as-built reference for how the frontend renders entity records. The backend
@@ -56,8 +56,9 @@ Two rules hold everywhere:
 
 | File | Role |
 |---|---|
-| `types.ts` | TypeScript mirror of the backend contract: `EntityType`, `FieldDataType`, `SchemaField`, `EntitySchema`, `EntityRecord`, `RecordValues`. |
+| `types.ts` | TypeScript mirror of the backend contract: `EntityType`, `FieldDataType`, `SchemaField`, `PicklistOption`, `EntitySchema`, `EntityRecord`, `RecordValues`. |
 | `entityConfig.ts` | `ENTITIES`: per-entity facts the schema does not serve (§4). Also `text()`. |
+| `displayValue.ts` | pure: `(field, value) → string`. A picklist code becomes its option's label (an unknown code shows as itself); anything else is `text(value)`. **The one place a code becomes a label**: the picklist display, the record header's subtitle and the companies list all go through it. |
 | `useEntitySchema.ts` | the schema bundle for a type, held in the react-query cache (§5). Also exports `entitySchemaQuery(type)`, the query options, for code outside a component. |
 | `resolveLayout.ts` | pure: `EntitySchema → ResolvedSection[]` (§6). |
 | `useEntityLayout.ts` | `useEntitySchema` + memoised `resolveLayout` → `{ sections, isLoading, error }`. |
@@ -71,7 +72,7 @@ Two rules hold everywhere:
 |---|---|
 | `fieldTypes.tsx` | the registry `FIELD_TYPES` and the `FieldDisplayProps` / `FieldInputProps` contracts. |
 | `TextFields.tsx` | `TEXT`, `LONGTEXT`, `EMAIL`, `URL`, `PHONE`. |
-| `NumberField.tsx`, `BooleanField.tsx`, `DateField.tsx`, `ReferenceField.tsx`, `CountryField.tsx` | one type each. |
+| `NumberField.tsx`, `BooleanField.tsx`, `DateField.tsx`, `ReferenceField.tsx`, `CountryField.tsx`, `PicklistField.tsx` | one type each. |
 | `FieldRow.tsx` | one field: label, then `Display` or `Input`; connects the input to the form. |
 | `fields.module.css` | styles shared by all field components. |
 
@@ -101,7 +102,7 @@ place rendering code names a specific entity:
 | `singular`, `plural` | `Company`, `Companies` | titles, buttons, messages |
 | `icon` | `CompanyIcon` | sidebar and page header |
 | `title(record)` | `record.name` | page title, reference link text |
-| `subtitleKeys` | `["type", "industry"]` | line under the page title |
+| `subtitleKeys` | `["type", "industry"]` | line under the page title; each value goes through `displayValue`, with the field found in the schema (not the layout, which may not place it) |
 
 The sidebar is built from `ENTITIES`, in its declaration order.
 
@@ -181,6 +182,7 @@ const FIELD_TYPES: Record<FieldDataType, FieldType>;
 | `DATE` | `"YYYY-MM-DD"` | locale date, built as a local date | date input |
 | `REFERENCE` | record id | link to the record, labelled with its title | select over the referenced entity's list |
 | `COUNTRY` | ISO alpha-2 code | country name | country select |
+| `PICKLIST` | option code (`"technology"`) | the option's label | select: "—" (→ `null`), the active options, and the record's current value even if inactive ("Shipping (inactive)") |
 
 - **Inputs are plain controlled components.** `value` and `onChange` use the API's JSON
   types, with `null` for "no value". They know nothing about forms, records or entities.
@@ -191,6 +193,9 @@ const FIELD_TYPES: Record<FieldDataType, FieldType>;
   is not a number. It reports a number, `null`, or the raw text, which validation rejects.
 - `ReferenceInput` loads the referenced entity's whole list. `AsyncSearchField` is in the
   codebase for when the API can search.
+- `PicklistInput` takes its options from `field.options` in the bundle, so it needs no
+  request. The `Select` treats `""` as "nothing chosen", so "—" uses the value `"-"`, which
+  no code can be.
 
 ### 7.2 The form holds a record
 
@@ -221,7 +226,8 @@ backend's `RecordMapper`:
 | string longer than `maxLength` | "At most N characters" |
 | `EMAIL` not shaped like `x@y` | "Not a valid email address" |
 
-`false` counts as a value, so a required checkbox may be unticked.
+`false` counts as a value, so a required checkbox may be unticked. There is no picklist
+rule: the select can only produce valid codes, and the server checks them anyway.
 
 The server stays the authority. `lib/api.ts` throws an `ApiError` with `status`, `code`
 and `details`. On a failed save, `applySaveError` puts each `details` entry under its
@@ -242,12 +248,13 @@ not about a field) goes into the error banner.
 
 ## 9. Tests
 
-`npm test` (Vitest) covers the two pure modules:
+`npm test` (Vitest) covers the pure modules:
 
 | Test | Covers |
 |---|---|
 | `resolveLayout.test.ts` | placements joined in order; no layout → one section with every field; missing fields and empty sections dropped |
 | `validateField.test.ts` | required, `false` as a value, max length, email shape, non-numeric number |
+| `displayValue.test.ts` | a code shows as its label (inactive too); an unknown code as itself; other fields as text |
 
 There are no component tests.
 
@@ -256,7 +263,8 @@ There are no component tests.
 ## 10. Known limitations
 
 - **List pages are hand-written.** `CompaniesPage`, `ContactsPage` and `DealsPage` pick
-  their own columns; only their data comes through `useRecordList`.
+  their own columns; only their data comes through `useRecordList`. `CompaniesPage` also
+  loads the schema, because its Type and Industry columns hold picklist codes.
 - **Field keys must not contain a dot.** A key is used as a react-hook-form field name,
   where a dot means a nested path.
 - **A required field that is on no layout** cannot be filled in; the server's "Required"

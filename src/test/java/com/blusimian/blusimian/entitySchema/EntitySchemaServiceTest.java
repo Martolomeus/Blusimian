@@ -15,11 +15,15 @@ import com.blusimian.blusimian.entityModel.StandardFieldRegistry;
 import com.blusimian.blusimian.entitySchema.dto.EntitySchemaResponse;
 import com.blusimian.blusimian.entitySchema.dto.SchemaFieldResponse;
 import com.blusimian.blusimian.entitySchema.dto.SchemaPlacementResponse;
+import com.blusimian.blusimian.picklists.EntityPicklists;
+import com.blusimian.blusimian.picklists.PicklistLookup;
+import com.blusimian.blusimian.picklists.PicklistOption;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -42,7 +46,12 @@ class EntitySchemaServiceTest {
 
     private static final CustomFieldDefinition LEAD_SOURCE =
             new CustomFieldDefinition(EntityType.COMPANY, "lead_source", "Lead Source",
-                    FieldDataType.TEXT, "cf_text_01", false, 10);
+                    FieldDataType.PICKLIST, "cf_text_01", false, 10);
+
+    private static final List<PicklistOption> INDUSTRIES = List.of(
+            new PicklistOption("agriculture", "Agriculture", true),
+            new PicklistOption("shipping", "Shipping", false));
+    private static final List<PicklistOption> SOURCES = List.of(new PicklistOption("web", "Web", true));
 
     private EntityLayoutService layouts;
     private EntitySchemaService service;
@@ -52,11 +61,15 @@ class EntitySchemaServiceTest {
         CustomFieldService customFieldService = mock(CustomFieldService.class);
         when(customFieldService.listActive(any())).thenReturn(List.of(LEAD_SOURCE));
         layouts = mock(EntityLayoutService.class);
+        PicklistLookup picklists = mock(PicklistLookup.class);
+        // Spelled differently from the fields on purpose: keys match case-insensitively.
+        when(picklists.forEntity(EntityType.COMPANY)).thenReturn(new EntityPicklists(Map.of(
+                "Industry", INDUSTRIES, "LEAD_SOURCE", SOURCES)));
         service = new EntitySchemaService(
                 new EntityFieldDictionary(
                         new StandardFieldRegistry(List.of(new CompanyStandardFieldProvider())),
                         new CustomFieldDescriptors(customFieldService)),
-                layouts);
+                layouts, picklists);
     }
 
     /** A one-section layout placing the given keys, in order. */
@@ -120,6 +133,19 @@ class EntitySchemaServiceTest {
         givenLayoutPlacing("name", "archived_field", "website");
 
         assertThat(placedKeys(service.getSchema(EntityType.COMPANY))).containsExactly("name", "website");
+    }
+
+    @Test
+    void picklistFieldsCarryTheirOptionsInactiveIncludedAndOthersCarryNone() {
+        when(layouts.resolve(EntityType.COMPANY)).thenReturn(Optional.empty());
+
+        Map<String, SchemaFieldResponse> fields = new java.util.HashMap<>();
+        service.getSchema(EntityType.COMPANY).fields().forEach(field -> fields.put(field.key(), field));
+
+        assertThat(fields.get("industry").options()).isEqualTo(INDUSTRIES);
+        assertThat(fields.get("lead_source").options()).isEqualTo(SOURCES);
+        assertThat(fields.get("type").options()).isEmpty();   // a picklist with no rows
+        assertThat(fields.get("name").options()).isNull();
     }
 
     @Test

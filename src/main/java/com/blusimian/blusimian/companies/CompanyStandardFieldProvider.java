@@ -26,6 +26,9 @@ import java.util.List;
  * cap from V1__init.sql, so an over-long value comes back as a 400 with a field error
  * instead of a Postgres constraint violation. description and website carry no cap --
  * their columns are unbounded `text`.
+ *
+ * type, industry and employeeRange are PICKLIST fields: each holds a code from the
+ * tenant's list in app.picklist_values, seeded from public.standard_picklist_values.
  */
 @Component
 public class CompanyStandardFieldProvider implements StandardFieldProvider<Company> {
@@ -35,14 +38,14 @@ public class CompanyStandardFieldProvider implements StandardFieldProvider<Compa
                     Company::getName, Company::setName).asRequired().withMaxLength(255),
             FieldDescriptor.of("legalName", "Legal Name", FieldDataType.TEXT, String.class,
                     Company::getLegalName, Company::setLegalName).withMaxLength(255),
-            FieldDescriptor.of("type", "Type", FieldDataType.TEXT, String.class,
+            FieldDescriptor.of("type", "Type", FieldDataType.PICKLIST, String.class,
                     Company::getType, Company::setType).withMaxLength(100),
-            FieldDescriptor.of("industry", "Industry", FieldDataType.TEXT, String.class,
+            FieldDescriptor.of("industry", "Industry", FieldDataType.PICKLIST, String.class,
                     Company::getIndustry, Company::setIndustry).withMaxLength(100),
             FieldDescriptor.of("description", "Description", FieldDataType.TEXT, String.class,
                     Company::getDescription, Company::setDescription),
-            FieldDescriptor.of("employeeRange", "Employee Range", FieldDataType.TEXT, String.class,
-                    Company::getEmployeeRange, Company::setEmployeeRange).withMaxLength(30),
+            FieldDescriptor.of("employeeRange", "Employee Range", FieldDataType.PICKLIST, String.class,
+                    Company::getEmployeeRange, Company::setEmployeeRange).withMaxLength(50),
             FieldDescriptor.of("website", "Website", FieldDataType.URL, String.class,
                     Company::getWebsite, Company::setWebsite),
             FieldDescriptor.of("phone", "Phone", FieldDataType.PHONE, String.class,

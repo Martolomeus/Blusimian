@@ -9,7 +9,7 @@ import java.util.regex.Pattern;
  * Each constant declares three things, and deliberately only three:
  *
  *   * pool     -- which slot pool a CUSTOM field of this type is allocated from.
- *                 TEXT/URL/PHONE/EMAIL all share the text pool; the DB CHECK constraint
+ *                 TEXT/URL/PHONE/EMAIL/PICKLIST share the text pool; the DB CHECK constraint
  *                 ck_cfd_type_matches_slot enforces the same mapping in SQL, so a
  *                 NUMBER field parked in a text column is unrepresentable. null means
  *                 the type is built-in only (REFERENCE, COUNTRY): it has no pool, so it cannot
@@ -41,6 +41,9 @@ public enum FieldDataType {
     // Deliberately loose (something@something): no stricter than the bean-validation
     // @Email it replaced on contacts, so no address that used to save is now rejected.
     EMAIL(CustomFieldSlots.POOL_TEXT, String.class, Pattern.compile("[^@\\s]+@[^@\\s]+")),
+    // One code from the field's picklist (app.picklist_values). Which codes are allowed is
+    // tenant data, so RecordMapper checks it against PicklistLookup, not here.
+    PICKLIST(CustomFieldSlots.POOL_TEXT, String.class, null),
     LONGTEXT(CustomFieldSlots.POOL_LONGTEXT, String.class, null),
     NUMBER(CustomFieldSlots.POOL_NUM, Number.class, null),
     BOOLEAN(CustomFieldSlots.POOL_BOOL, Boolean.class, null),

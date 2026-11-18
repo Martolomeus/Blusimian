@@ -26,7 +26,7 @@ import {
 import type { EntityPermissions, Role } from "./types";
 
 function field(key: string, required = false): SchemaField {
-  return { key, label: key, dataType: "TEXT", required, maxLength: null, referenceTo: null };
+  return { key, label: key, dataType: "TEXT", required, maxLength: null, referenceTo: null, options: null };
 }
 
 const FIELDS: EntityFields = {

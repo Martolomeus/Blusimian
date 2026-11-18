@@ -241,8 +241,7 @@ segment (`/api/entities/{object}/schema`). Without a separate namespace:
   and that tenant's object gets shadowed, or the release breaks that tenant.
 
 The `__c` suffix rules both out structurally: standard keys never contain `__`, and
-custom keys always end with it. CRM admins know this convention from Salesforce, so it
-won't surprise them. The CHECK enforces it in the database, and bean validation on the
+custom keys always end with it. The CHECK enforces it in the database, and bean validation on the
 request DTO turns a bad key into a 400 before the database ever sees it.
 
 > **Side finding, not in scope here.** Custom *fields* have the same latent problem. If we
@@ -621,6 +620,6 @@ Create can't close `name`; a required field reaches only that object's rows with
 - **`@Generated` inside an `@Embeddable` on Hibernate 7:** expected to work, but verify in
   Phase 0. Fallback: map `object_key` directly on each entity instead of in `ObjectRef`.
 - **Record-level `name` for custom objects:** always a required TEXT, or should a tenant
-  be able to pick an auto-number (`INV-0001`)? Salesforce offers both; start with TEXT.
+  be able to pick an auto-number (`INV-0001`)? Start with TEXT.
 - **Limits:** max custom objects per tenant (a product decision; the table has no
   inherent limit).

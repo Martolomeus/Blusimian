@@ -3,7 +3,8 @@ import type { SchemaField } from "./types";
 // Client-side check of one field's value against what the schema says about it.
 // Mirrors the backend's RecordMapper.apply rule for rule (required, type, max length,
 // email format), so the user hears about a problem before the request is sent. The
-// server remains the authority: its own field errors are shown the same way.
+// picklist rule is left to the select, which can only produce valid codes. The server
+// remains the authority: its own field errors are shown the same way.
 //
 // Returns the message to show, or undefined when the value is fine.
 export function validateField(field: SchemaField, value: unknown): string | undefined {

@@ -13,6 +13,7 @@ const DATA_TYPE_LABELS: Record<FieldDataType, string> = {
   EMAIL: "Email",
   URL: "URL",
   PHONE: "Phone",
+  PICKLIST: "Picklist",
   NUMBER: "Number",
   BOOLEAN: "Yes/No",
   DATE: "Date",

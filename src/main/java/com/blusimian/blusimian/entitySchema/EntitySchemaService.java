@@ -5,12 +5,15 @@ import com.blusimian.blusimian.entityModel.EntityType;
 import com.blusimian.blusimian.entityLayouts.EntityLayoutService;
 import com.blusimian.blusimian.entityLayouts.dto.EntityLayoutResponse;
 import com.blusimian.blusimian.entityLayouts.dto.EntityLayoutSectionResponse;
+import com.blusimian.blusimian.entityModel.FieldDataType;
 import com.blusimian.blusimian.entityModel.FieldDescriptor;
 import com.blusimian.blusimian.entitySchema.dto.EntitySchemaResponse;
 import com.blusimian.blusimian.entitySchema.dto.SchemaFieldResponse;
 import com.blusimian.blusimian.entitySchema.dto.SchemaLayoutResponse;
 import com.blusimian.blusimian.entitySchema.dto.SchemaPlacementResponse;
 import com.blusimian.blusimian.entitySchema.dto.SchemaSectionResponse;
+import com.blusimian.blusimian.picklists.EntityPicklists;
+import com.blusimian.blusimian.picklists.PicklistLookup;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +41,9 @@ import java.util.Map;
  * mappings that have to be kept in step -- the layout resolves either by `key` (one flat
  * keyspace).
  *
+ * A PICKLIST field carries its options from PicklistLookup, the same lookup RecordMapper
+ * checks writes against, so the bundle and the write path can't disagree.
+ *
  * The bundle is self-consistent: every placement's key exists in `fields`, spelled as it
  * is there. A placement is a case-insensitive key with no foreign key, so it can outlive its field
  * (an archived custom field) or differ from it in case; both are settled here, once,
@@ -48,17 +54,26 @@ public class EntitySchemaService {
 
     private final EntityFieldDictionary dictionary;
     private final EntityLayoutService entityLayoutService;
+    private final PicklistLookup picklists;
 
-    public EntitySchemaService(EntityFieldDictionary dictionary, EntityLayoutService entityLayoutService) {
+    public EntitySchemaService(EntityFieldDictionary dictionary, EntityLayoutService entityLayoutService,
+                               PicklistLookup picklists) {
         this.dictionary = dictionary;
         this.entityLayoutService = entityLayoutService;
+        this.picklists = picklists;
     }
 
     @Transactional(readOnly = true)
     public EntitySchemaResponse getSchema(EntityType entityType) {
+        List<FieldDescriptor<?>> descriptors = dictionary.fieldsFor(entityType);
+        // One lookup per bundle, skipped when the entity has no picklist field.
+        EntityPicklists options = descriptors.stream().anyMatch(field -> field.dataType() == FieldDataType.PICKLIST)
+                ? picklists.forEntity(entityType)
+                : EntityPicklists.EMPTY;
+
         // Standard then custom -- same descriptor shape, so the same mapping.
-        List<SchemaFieldResponse> fields = dictionary.fieldsFor(entityType).stream()
-                .map(EntitySchemaService::toResponse)
+        List<SchemaFieldResponse> fields = descriptors.stream()
+                .map(field -> toResponse(field, options))
                 .toList();
 
         // Lower-cased key -> the dictionary's spelling, to match placements against.
@@ -93,8 +108,9 @@ public class EntitySchemaService {
     }
 
     /** One descriptor as a dictionary entry. Identical for standard and custom by design. */
-    private static SchemaFieldResponse toResponse(FieldDescriptor<?> field) {
+    private static SchemaFieldResponse toResponse(FieldDescriptor<?> field, EntityPicklists options) {
         return new SchemaFieldResponse(field.key(), field.label(), field.dataType(),
-                field.required(), field.maxLength(), field.referenceTo());
+                field.required(), field.maxLength(), field.referenceTo(),
+                field.dataType() == FieldDataType.PICKLIST ? options.optionsFor(field.key()) : null);
     }
 }

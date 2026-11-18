@@ -3,7 +3,7 @@ import { validateField } from "./validateField";
 import type { SchemaField } from "./types";
 
 function field(overrides: Partial<SchemaField> = {}): SchemaField {
-  return { key: "f", label: "F", dataType: "TEXT", required: false, maxLength: null, referenceTo: null, ...overrides };
+  return { key: "f", label: "F", dataType: "TEXT", required: false, maxLength: null, referenceTo: null, options: null, ...overrides };
 }
 
 describe("validateField", () => {

@@ -6,6 +6,7 @@ import { BooleanField } from "./BooleanField";
 import { DateField } from "./DateField";
 import { ReferenceField } from "./ReferenceField";
 import { CountryField } from "./CountryField";
+import { PicklistField } from "./PicklistField";
 
 // The field type registry: how each data type is shown and edited. This is the only
 // place data types are enumerated -- FieldRow looks a field's type up here and never
@@ -40,6 +41,7 @@ export const FIELD_TYPES: Record<FieldDataType, FieldType> = {
   EMAIL: EmailField,
   URL: UrlField,
   PHONE: PhoneField,
+  PICKLIST: PicklistField,
   NUMBER: NumberField,
   BOOLEAN: BooleanField,
   DATE: DateField,

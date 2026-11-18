@@ -11,6 +11,7 @@ export type FieldDataType =
   | "EMAIL"
   | "URL"
   | "PHONE"
+  | "PICKLIST"
   | "NUMBER"
   | "BOOLEAN"
   | "DATE"
@@ -26,6 +27,15 @@ export type SchemaField = {
   maxLength: number | null;
   /** Only on a REFERENCE field: the entity type whose record id the value holds. */
   referenceTo: EntityType | null;
+  /** Only on a PICKLIST field: its options in display order, inactive ones included. */
+  options: PicklistOption[] | null;
+};
+
+/** One picklist value. A record holds the code; the label is what's shown. */
+export type PicklistOption = {
+  code: string;
+  label: string;
+  active: boolean;
 };
 
 /** A titled group of placed fields. `fields` is in display order. */

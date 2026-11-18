@@ -3,9 +3,11 @@ import { useNavigate } from "react-router";
 import { useForm } from "react-hook-form";
 import { EntityHeader } from "@/components/EntityHeader";
 import { Button } from "@/components/ui";
-import { text, type EntityConfig } from "@/lib/entity/entityConfig";
+import type { EntityConfig } from "@/lib/entity/entityConfig";
+import { displayValue } from "@/lib/entity/displayValue";
 import { applySaveError, changedValues, formValues } from "@/lib/entity/recordForm";
 import { useDeleteRecord, useSaveRecord } from "@/lib/entity/records";
+import { useEntitySchema } from "@/lib/entity/useEntitySchema";
 import type { ResolvedSection } from "@/lib/entity/resolveLayout";
 import type { EntityRecord, RecordValues } from "@/lib/entity/types";
 import { RecordForm } from "./RecordForm";
@@ -25,6 +27,8 @@ export function RecordDetail({ config, sections, record }: RecordDetailProps) {
   const form = useForm<RecordValues>({ defaultValues: formValues(sections, record) });
   const save = useSaveRecord(config.type, record.id);
   const remove = useDeleteRecord(config.type);
+  // Already cached: the sections came from it. The subtitle's keys needn't be on the layout.
+  const { data: schema } = useEntitySchema(config.type);
   const [isEditing, setIsEditing] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const { dirtyFields, isSubmitting } = form.formState;
@@ -72,7 +76,9 @@ export function RecordDetail({ config, sections, record }: RecordDetailProps) {
       <EntityHeader
         icon={config.icon}
         title={config.title(record)}
-        subtitle={config.subtitleKeys.map((key) => text(record[key]))}
+        subtitle={config.subtitleKeys.map((key) =>
+          displayValue(schema?.fields.find((field) => field.key === key), record[key]),
+        )}
         backLink={{ to: config.path, label: config.plural }}
         isEditing={isEditing}
         onEdit={startEdit}

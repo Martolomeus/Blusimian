@@ -1,10 +1,11 @@
 # Custom Fields — Architecture Reference
 
 **Status:** Implemented & verified end-to-end · **Scope:** `COMPANY`, `CONTACT`, `DEAL` entities, per tenant (RLS, `Architecture/multitenancy.md`)
-**Last updated:** 2026-10-28 · **Packages:** `com.blusimian.blusimian.customFields`, `com.blusimian.blusimian.entityModel`
+**Last updated:** 2026-11-08 · **Packages:** `com.blusimian.blusimian.customFields`, `com.blusimian.blusimian.entityModel`
 
 This is the as-built reference for the custom fields feature. The record read/write machinery that
-consumes custom fields is documented in `Architecture/entity-layouts.md` §3.
+consumes custom fields is documented in `Architecture/entity-layouts.md` §3. A `PICKLIST` custom
+field keeps its values in `app.picklist_values`, documented in `Architecture/picklists.md`.
 
 > **Revision note (storage).** Custom field *values* used to live in a `custom_fields
 > jsonb` column and were checked by a `CustomFieldValidator`. Both are gone. Values now
@@ -56,11 +57,11 @@ through static request/response DTOs.
 | `entity_type` | varchar(50) | CHECK `in ('COMPANY','CONTACT','DEAL')`; shared enum `entityModel.EntityType` |
 | `field_key` | varchar(100), collation `app.case_insensitive` | case-insensitive; write-once; the record's JSON key |
 | `label` | varchar(255) | display name (mutable) |
-| `data_type` | varchar(30) | CHECK `in ('TEXT','URL','PHONE','EMAIL','NUMBER','BOOLEAN','DATE','LONGTEXT')`; enum `entityModel.FieldDataType` minus the built-in-only `REFERENCE` and `COUNTRY` |
+| `data_type` | varchar(30) | CHECK `in ('TEXT','URL','PHONE','EMAIL','PICKLIST','NUMBER','BOOLEAN','DATE','LONGTEXT')`; enum `entityModel.FieldDataType` minus the built-in-only `REFERENCE` and `COUNTRY` |
 | `column_name` | varchar(20) | **the allocated slot**, e.g. `cf_text_01`; write-once |
 | `required` | boolean | default false; enforced on write (§6) |
 | `sort_order` | int | display order |
-| `config` | jsonb | default `'{}'`; reserved for type-specific rules (picklist options, min/max, stricter length); unmapped in JPA until needed |
+| `config` | jsonb | default `'{}'`; reserved for type-specific rules (min/max, stricter length); unmapped in JPA until needed. Picklist options are **not** here: they're rows in `app.picklist_values` (`picklists.md` §4) |
 | `archived_at` | timestamptz | NULL = active; soft-delete marker |
 | `created_at` / `updated_at` | timestamptz | `@CreationTimestamp` / `@UpdateTimestamp` |
 
@@ -82,7 +83,7 @@ Every record table carries the same pool, mapped by the one `CustomFieldSlots` e
 
 | Pool | Slots | Column type | Holds |
 |---|---|---|---|
-| `cf_text_01..40` | 40 | `varchar(255)` | `TEXT`, `URL`, `PHONE`, `EMAIL` |
+| `cf_text_01..40` | 40 | `varchar(255)` | `TEXT`, `URL`, `PHONE`, `EMAIL`, `PICKLIST` (the code) |
 | `cf_num_01..25` | 25 | `numeric(19,4)` | `NUMBER` |
 | `cf_bool_01..25` | 25 | `boolean` | `BOOLEAN` |
 | `cf_date_01..10` | 10 | `date` | `DATE` |
@@ -117,13 +118,15 @@ V1, edited in place, DB wiped on change — no V2+ yet).
 | File | Package | Role |
 |---|---|---|
 | `EntityType` | `entityModel` | enum: `COMPANY, CONTACT, DEAL`. Shared discriminator, reused by layouts + schema. |
-| `FieldDataType` | `entityModel` | enum: `TEXT, URL, PHONE, EMAIL, LONGTEXT, NUMBER, BOOLEAN, DATE, REFERENCE, COUNTRY`. Declares three things per type: which **pool** it allocates from (null = built-in only, so `REFERENCE` and `COUNTRY` can't be custom fields → 400), which **JSON type** it arrives as (`accepts`), and an optional **format** a non-blank value must match (`wellFormed`; only `EMAIL`). Shared with built-in fields. |
+| `FieldDataType` | `entityModel` | enum: `TEXT, URL, PHONE, EMAIL, PICKLIST, LONGTEXT, NUMBER, BOOLEAN, DATE, REFERENCE, COUNTRY`. Declares three things per type: which **pool** it allocates from (null = built-in only, so `REFERENCE` and `COUNTRY` can't be custom fields → 400), which **JSON type** it arrives as (`accepts`), and an optional **format** a non-blank value must match (`wellFormed`; only `EMAIL`). Shared with built-in fields. `PICKLIST` takes the text pool; which codes it allows is tenant data, checked by `RecordMapper` (§6). |
 | `CustomFieldSlots` | `entityModel` | **Generated** `@Embeddable` holding the 105 slot columns plus the accessor registry (`accessor(columnName)`, `pool(prefix)`). Each `SlotAccessor` carries the column's **Java type and length cap** alongside its getter/setter — both generated from the column declaration, so neither can drift from the schema. Regenerate with `scripts/gen_slots.py`. |
 | `RecordEntity` | `entityModel` | Capability contract: `getId/getCreatedAt/getUpdatedAt/getSlots`. Says nothing about how a custom value is stored. |
 | `StringToEntityTypeConverter` | `entityModel` | path segment → `EntityType`, case-insensitive; unknown → 400. |
 | `CustomFieldDefinition` | `customFields` | JPA `@Entity`. Public ctor for create; `archive()`; no setters — `fieldKey`, `dataType` and `columnName` are write-once (`updatable=false` on the key and the slot). |
 | `CustomFieldDefinitionRepository` | `customFields` | Spring Data; four derived/`@Query` methods (below). |
-| `CustomFieldDefinitionRequest` | `customFields` | POST body DTO (+ bean validation). Carries no `columnName` — the server allocates it. |
+| `CustomFieldDefinitionRequest` | `customFields` | POST body DTO (+ bean validation). Carries no `columnName` — the server allocates it. `options` (a `PICKLIST` field's first values) is required on a `PICKLIST` and refused on any other type; a five-argument constructor without it serves the other call sites. |
+| `CustomFieldOptionRequest` | `customFields` | `(code, label)`, code optional. Mirrors `picklists.PicklistOptionRequest` without `active`, so `customFields` needn't know `picklists`. |
+| `CustomFieldCreated` | `customFields` | Event `(entityType, fieldKey, columnName, required, options)`, published in the create transaction (§7). |
 | `CustomFieldDefinitionResponse` | `customFields` | Response DTO + `from(entity)`. Deliberately omits `columnName`: storage is not part of the contract. |
 | `StandardFieldRegistry.reservedKeysFor` | `entityModel` | The keys a new custom field may not take (built-in keys + `RecordMapper.META_KEYS`); `CustomFieldService` consumes it. |
 | `CustomFieldService` | `customFields` | `listActive`, `listAll`, `create` (+ slot allocation), `archive`. |
@@ -165,10 +168,11 @@ Verified from the imports, not asserted:
 
 ```
 platform       ──► (nothing)
-entityModel    ──► platform customFields         ← the foundation (customFields: RecordMapper only)
+entityModel    ──► platform customFields picklists  ← the foundation (customFields, picklists: RecordMapper only)
 customFields   ──► entityModel platform
+picklists      ──► entityModel customFields platform tenants
 entityLayouts  ──► entityModel platform
-entitySchema   ──► entityModel entityLayouts customFields
+entitySchema   ──► entityModel entityLayouts customFields picklists
 companies      ──► entityModel platform
 contacts       ──► entityModel platform
 deals          ──► entityModel platform
@@ -189,6 +193,11 @@ each entity slice (`CompanyStandardFieldProvider`, `ContactStandardFieldProvider
 `DealStandardFieldProvider`): there is one per entity,
 collected by `StandardFieldRegistry`, so `entityModel` never imports `companies`.
 
+`entityModel ⇄ picklists` is the same kind of cycle: `picklists` uses the vocabulary, and
+`RecordMapper` injects `picklists.PicklistLookup`, which injects only its repository
+(`picklists.md` §5.4). `customFields` doesn't know `picklists` exists: a new picklist's
+options reach it through `CustomFieldCreated`.
+
 The reserved-key check is a plain method, `StandardFieldRegistry.reservedKeysFor` (the
 provider registry's keys plus `RecordMapper.META_KEYS`), called by `CustomFieldService`.
 
@@ -201,11 +210,14 @@ Base path `/api/custom-fields`. Failures use the platform `ApiError` shape (§9)
 | Method | Path | Body | Success | Errors |
 |---|---|---|---|---|
 | GET | `/{entityType}` | — | 200 `[CustomFieldDefinitionResponse]` (active, ordered) | 400 unknown entityType |
-| POST | `/{entityType}` | `CustomFieldDefinitionRequest` | 201 `CustomFieldDefinitionResponse` | 400 invalid body; 409 duplicate key, reserved key, or pool exhausted |
+| POST | `/{entityType}` | `CustomFieldDefinitionRequest` | 201 `CustomFieldDefinitionResponse` | 400 invalid body, a `PICKLIST` without options, options on another type, or a broken option rule (`picklists.md` §10.2); 409 duplicate key, reserved key, or pool exhausted |
 | DELETE | `/{id}` | — | 204 (archives) | 404 unknown id |
 
 `entityType` is `company`, `contact` or `deal`, case-insensitive (`company` == `COMPANY`). GET `/{entityType}` and
 DELETE `/{id}` coexist, disambiguated by HTTP method.
+
+The body needs `required` and `sortOrder` as well: they're primitives, and Jackson 3 refuses
+a missing primitive (400 "Malformed or invalid request body").
 
 For rendering, prefer `GET /api/entities/{entityType}/schema`: it merges built-in and
 custom fields into one uniform, ETagged dictionary and carries the layout. This endpoint
@@ -227,6 +239,11 @@ POST /api/custom-fields/company
 POST /api/companies
 { "name":"Acme","lead_source":"Referral" }
 201 → { "id":"…","name":"Acme",…,"lead_source":"Referral","createdAt":…,"updatedAt":… }
+
+POST /api/custom-fields/company     (a picklist: options in the same request)
+{ "fieldKey":"region","label":"Region","dataType":"PICKLIST","required":false,"sortOrder":50,
+  "options":[{"label":"EMEA"},{"label":"Americas","code":"amer"}] }
+201 → the definition, as above; options are served by the bundle and /api/picklists
 
 PATCH /api/companies/{id}          (unknown key)
 { "nope": 1 }
@@ -263,9 +280,12 @@ request can't half-apply:
    fields take the cap from their slot (`varchar(255)`); built-in fields declare their own
    via `FieldDescriptor.withMaxLength`, because a built-in TEXT field may sit on an
    unbounded `text` column (`description`, `website`).
-5. `required` is checked against the **merged result**: on create a required field must be
+5. A `PICKLIST` value that passed 3–4 must be null, an active code of its field, or the code
+   the record already holds. One `PicklistLookup` query covers the request, and only when it
+   sets a picklist field (`picklists.md` §6).
+6. `required` is checked against the **merged result**: on create a required field must be
    sent, on update it may be omitted but not cleared. An archived field is never required.
-6. All problems come back in one 400 `VALIDATION_ERROR` with per-field `details`.
+7. All problems come back in one 400 `VALIDATION_ERROR` with per-field `details`.
 
 The write path uses `listAll` (archived included) so a just-archived field stays writable;
 the read path uses `listActive`, so an archived field's values are not returned.
@@ -291,9 +311,14 @@ Creating a definition also claims a physical column. `CustomFieldService.create`
    dense and gaps left by purges are refilled. Pool full → 409
    `CustomFieldSlotsExhaustedException`.
 4. Saves. `uq_cfd_column` and `ck_cfd_type_matches_slot` remain the backstop.
-5. Publishes `CustomFieldCreated(entityType, columnName, required)`. `roles` listens,
-   synchronously and in this transaction, and grants a required field to the roles that
-   hold Create. The event keeps `customFields` from knowing `roles` exists.
+5. Publishes `CustomFieldCreated(entityType, fieldKey, columnName, required, options)`. Two
+   slices listen, synchronously and in this transaction: `roles` grants a required field to
+   the roles that hold Create, and `picklists` stores a `PICKLIST` field's options under the
+   PUT rules. A refused option throws out of `publishEvent`, so the field and its slot roll
+   back too. The event keeps `customFields` from knowing either slice exists.
+
+The option checks that need no database (a `PICKLIST` without options, options on another
+type) run before the lock, so they never claim a slot.
 
 The advisory lock is preferred over catch-and-retry on the unique violation: a constraint
 violation marks the transaction rollback-only, so a retry needs a `REQUIRES_NEW` attempt
@@ -315,7 +340,13 @@ nothing — creating a custom field is an admin action a few times a day.
    regex-constrained catalog, but validate it against `CustomFieldSlots` before emitting.
    **It must also reset the slot's `_read` and `_edit` pair to `false` on every role, in the
    same transaction.** Otherwise the next field to take the slot inherits the old field's
-   grants (`roles-and-permissions.md` §6.2).
+   grants (`roles-and-permissions.md` §6.2). **And it must delete the field's picklist
+   values** (`delete from app.picklist_values where entity_type = ? and field_key = ?`), in
+   the same transaction and before the key is released, or the next field with that key
+   inherits them (`picklists.md` §9.3).
+
+Archiving leaves a picklist field's values in place: the archived field is still writable,
+and a record holding one of its codes must still save.
 
 There is no separate scrub stage any more — nulling one typed column *is* the scrub, and
 it is cheap enough to do synchronously. (Under jsonb this needed an async job to strip a
@@ -368,9 +399,12 @@ end-to-end pass against Postgres 16 — schema bundle, flat create/read, partial
 GET→PUT round-trip, slot allocation across pools, and rejection of bad type, over-length
 and unknown values.
 
+**Since added:** the `PICKLIST` type, with options in `app.picklist_values`
+(`Architecture/picklists.md`).
+
 **Deferred:** PUT/update of definitions (label and `sort_order` are the mutable parts);
-purge + slot reclamation; picklist types and the `config` column; definition caching;
-per-field filterable flag and its index management.
+purge + slot reclamation; the `config` column; definition caching; per-field filterable
+flag and its index management.
 
 **When a definition becomes editable:** switching `required` on, or un-archiving a field,
 must publish `CustomFieldCreated` too, or a role with Create is left unable to fill the
@@ -416,14 +450,14 @@ The cost is the pool's fixed size, and a `Company` entity 133 columns wide. Alte
 weighed and rejected: EAV (indexable and per-value concurrent, but joins and pivots on
 every read), per-tenant DDL (real columns, but Postgres caps at 1600 and DDL takes locks),
 and JSONB plus generated columns (keeps the blob's weaknesses for everything not
-promoted). Mature CRM platforms converge on pools or real DDL for this reason.
+promoted).
 
 ---
 
 ## 12. Extension points
 
-- **New entity type:** add to `entityModel.EntityType` + the two CHECK constraints
-  (`ck_cfd_entity_type`, `ck_layout_entity_type`); give the table the same `cf_*` pool;
+- **New entity type:** add to `entityModel.EntityType` + the three CHECK constraints
+  (`ck_cfd_entity_type`, `ck_layout_entity_type`, `ck_picklist_values_entity_type`); give the table the same `cf_*` pool;
   have the entity implement `RecordEntity`, embed `CustomFieldSlots` and carry
   `@DynamicUpdate`; add a `StandardFieldProvider` (and list it in
   `StandardFieldProvidersTest`, which fails for a type without one); serve it from a
@@ -438,8 +472,8 @@ promoted). Mature CRM platforms converge on pools or real DDL for this reason.
 - **Widen a pool:** add columns in V1, update `scripts/gen_slots.py`, regenerate, and add
   each new slot's pair to the permission tables (startup stops until you do). Instant at
   the database level (nullable, no default).
-- **Type-specific rules** (picklist options, min/max, stricter length): use the existing
-  `config` jsonb column; map it on the entity when first needed.
+- **Type-specific rules** (min/max, stricter length): use the existing `config` jsonb
+  column; map it on the entity when first needed. Picklist options have their own table.
 - **Make a field filterable:** `create index concurrently` on its slot, and record the flag
   on the definition so the query builder knows the index exists.
 - **A new tenant-scoped table:** follow the recipe in `multitenancy.md` §17.

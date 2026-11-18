@@ -3,7 +3,7 @@ import { resolveLayout } from "./resolveLayout";
 import type { EntitySchema, SchemaField } from "./types";
 
 function field(key: string): SchemaField {
-  return { key, label: key, dataType: "TEXT", required: false, maxLength: null, referenceTo: null };
+  return { key, label: key, dataType: "TEXT", required: false, maxLength: null, referenceTo: null, options: null };
 }
 
 const fields = [field("name"), field("website"), field("phone")];

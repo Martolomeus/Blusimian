@@ -1,7 +1,7 @@
 # Entity Layouts & Entity Schema — Architecture Reference
 
 **Status:** Read path, schema bundle and layout write path implemented & verified; role assignment not built · **Scope:** `COMPANY`, `CONTACT`, `DEAL`, per tenant (RLS, `Architecture/multitenancy.md`)
-**Last updated:** 2026-10-28 · **Packages:** `com.blusimian.blusimian.entityLayouts`, `com.blusimian.blusimian.entitySchema`, `com.blusimian.blusimian.entityModel`
+**Last updated:** 2026-11-08 · **Packages:** `com.blusimian.blusimian.entityLayouts`, `com.blusimian.blusimian.entitySchema`, `com.blusimian.blusimian.entityModel`
 
 This is the as-built reference for entity layouts, the entity-schema endpoint, and the
 record machinery they share with every entity. The frontend that consumes the schema is
@@ -115,7 +115,7 @@ appended to its company Overview (`DemoTenantSeeder`).
 |---|---|
 | `EntityType` | enum `COMPANY, CONTACT, DEAL`. Shared discriminator for custom fields, layouts and the schema. |
 | `StringToEntityTypeConverter` | binds a path segment to `EntityType`, case-insensitive; unknown → 400. |
-| `FieldDataType` | enum `TEXT, URL, PHONE, EMAIL, LONGTEXT, NUMBER, BOOLEAN, DATE, REFERENCE, COUNTRY`. `REFERENCE` and `COUNTRY` are built-in only (no slot pool, so not available to custom fields). Drives how the frontend renders a field. |
+| `FieldDataType` | enum `TEXT, URL, PHONE, EMAIL, PICKLIST, LONGTEXT, NUMBER, BOOLEAN, DATE, REFERENCE, COUNTRY`. `REFERENCE` and `COUNTRY` are built-in only (no slot pool, so not available to custom fields). Drives how the frontend renders a field. |
 | `FieldDescriptor` | one field's metadata (`key, label, dataType, required, maxLength, referenceTo`) plus how to read and write its value. Built-in and custom fields both arrive as descriptors. |
 | `StandardFieldProvider` | SPI each entity slice implements to declare its built-in fields. |
 | `StandardFieldRegistry` | every provider indexed by `EntityType`; also the reserved keys a custom field may not take. |
@@ -143,10 +143,10 @@ appended to its company Overview (`DemoTenantSeeder`).
 
 | File | Role |
 |---|---|
-| `EntitySchemaService` | `getSchema(EntityType)`: composes the field dictionary (`EntityFieldDictionary`) and the resolved layout, and makes the bundle self-consistent (§5.3). |
+| `EntitySchemaService` | `getSchema(EntityType)`: composes the field dictionary (`EntityFieldDictionary`), each picklist field's options (`picklists.PicklistLookup`, one query, skipped when the entity has no picklist field) and the resolved layout, and makes the bundle self-consistent (§5.3). |
 | `EntitySchemaController` | `GET /api/entities/{entityType}/schema`; ETag, `If-None-Match` → 304, `Cache-Control`. |
 | `dto/EntitySchemaResponse` | `{ entityType, fields[], layout }`; `layout` is null when none is configured. |
-| `dto/SchemaFieldResponse` | `{ key, label, dataType, required, maxLength, referenceTo }`. |
+| `dto/SchemaFieldResponse` | `{ key, label, dataType, required, maxLength, referenceTo, options }`. |
 | `dto/SchemaLayoutResponse` | `{ id, label, sections[] }`. |
 | `dto/SchemaSectionResponse` | `{ label, columnCount, sortOrder, fields[] }`. |
 | `dto/SchemaPlacementResponse` | `{ key, sortOrder }`. |
@@ -156,7 +156,8 @@ appended to its company Overview (`DemoTenantSeeder`).
 `CompanyStandardFieldProvider`, `ContactStandardFieldProvider`, `DealStandardFieldProvider`
 declare each entity's built-in fields: key (the JSON property name), label, data type,
 required, and the column's length cap. `Deal.customerId` is a `REFERENCE` to `COMPANY`;
-`Contact.countryCode` is a `COUNTRY`.
+`Contact.countryCode` is a `COUNTRY`. `Company.type`, `industry`, `employeeRange` and
+`Contact.salutation` are `PICKLIST`s (`Architecture/picklists.md`).
 
 ---
 
@@ -164,10 +165,11 @@ required, and the column's length cap. `Deal.customerId` is a `REFERENCE` to `CO
 
 ```
 platform       ──► (nothing)
-entityModel    ──► platform customFields
+entityModel    ──► platform customFields picklists
 customFields   ──► entityModel platform
+picklists      ──► entityModel customFields platform tenants
 entityLayouts  ──► entityModel platform
-entitySchema   ──► entityModel entityLayouts
+entitySchema   ──► entityModel entityLayouts customFields picklists
 companies, contacts, deals ──► entityModel platform
 ```
 
@@ -177,6 +179,8 @@ companies, contacts, deals ──► entityModel platform
   `StandardFieldProvider`; `entityModel` collects the providers and never imports a slice.
 - The `entityModel ⇄ customFields` package cycle is deliberate and explained in
   `custom-fields.md` §4. `EntityFieldDictionary` uses the same edge as `RecordMapper`.
+  `entityModel ⇄ picklists` is the same kind (`picklists.md` §5.4): `RecordMapper` checks a
+  picklist value through `PicklistLookup`, and `entitySchema` composes the options into the bundle.
 
 ---
 
@@ -211,9 +215,12 @@ GET /api/entities/company/schema
 {
   "entityType": "COMPANY",
   "fields": [                              // every field of the entity, built-in then custom
-    { "key": "name",        "label": "Name",        "dataType": "TEXT", "required": true,  "maxLength": 255,  "referenceTo": null },
-    { "key": "website",     "label": "Website",     "dataType": "URL",  "required": false, "maxLength": null, "referenceTo": null },
-    { "key": "lead_source", "label": "Lead Source", "dataType": "TEXT", "required": false, "maxLength": 255,  "referenceTo": null }
+    { "key": "name",        "label": "Name",        "dataType": "TEXT", "required": true,  "maxLength": 255,  "referenceTo": null, "options": null },
+    { "key": "website",     "label": "Website",     "dataType": "URL",  "required": false, "maxLength": null, "referenceTo": null, "options": null },
+    { "key": "industry",    "label": "Industry",    "dataType": "PICKLIST", "required": false, "maxLength": 100, "referenceTo": null,
+      "options": [ { "code": "agriculture", "label": "Agriculture", "active": true },
+                   { "code": "shipping",    "label": "Shipping",    "active": false } ] },
+    { "key": "lead_source", "label": "Lead Source", "dataType": "TEXT", "required": false, "maxLength": 255,  "referenceTo": null, "options": null }
   ],
   "layout": {                              // the one layout resolved for the caller, or null
     "id": "5c8e1f04-2b7a-4d39-9f61-0e3a7c2d4b18",
@@ -231,6 +238,8 @@ GET /api/entities/company/schema
   keyspace per entity and look identical here.
 - `required` and `maxLength` are in the bundle so a client can validate before sending.
 - `referenceTo` is set only on a `REFERENCE` field: the entity type the id points at.
+- `options` is set only on a `PICKLIST` field: its options in display order, **inactive ones
+  included**, so a client can label a record that holds one. A record holds the `code`.
 - Sections and placements arrive in `sortOrder` order. **Array order is display order.**
 
 ### 5.3 Self-consistency
@@ -260,7 +269,7 @@ keeps returning exactly one layout, so its contract and every client stay unchan
 
 - **ETag:** a strong content hash, SHA-256 over the response record's `toString()`. It
   changes exactly when the bundle's content changes (a field added, renamed or archived;
-  the layout edited; a different layout resolved).
+  a picklist edited; the layout edited; a different layout resolved).
 - **`Cache-Control: no-cache, private`:** a browser may store the bundle but must
   revalidate before each use, which it does itself with `If-None-Match`. Clients get
   304s without any conditional-request code. `private` keeps shared caches out: the
@@ -340,7 +349,8 @@ make a 21st; that is harmless.
   `@Transactional(readOnly = true)` method and returns the DTO, not the entity.
 - `EntitySchemaService.getSchema` runs in its own read-only transaction: the fields from
   `EntityFieldDictionary` (built-in from `StandardFieldRegistry`, then active custom
-  fields from `CustomFieldDescriptors`), the layout from `EntityLayoutService.resolve`.
+  fields from `CustomFieldDescriptors`), picklist options from `PicklistLookup`, the layout
+  from `EntityLayoutService.resolve`.
 - `EntityLayoutService.list` maps the entity's layout trees to DTOs inside its transaction too.
 - Both field kinds go through the same `FieldDescriptor → SchemaFieldResponse` mapping,
   so the dictionary is uniform by construction.
@@ -362,7 +372,7 @@ subclasses.
 
 | Test | Covers |
 |---|---|
-| `EntitySchemaServiceTest` | the bundle carries the resolved layout's id, label and sections; built-in and custom fields share one dictionary (a real `EntityFieldDictionary`); no layout → `layout` null; a placement without a field is dropped; a placement key is spelled as in the dictionary |
+| `EntitySchemaServiceTest` | the bundle carries the resolved layout's id, label and sections; built-in and custom fields share one dictionary (a real `EntityFieldDictionary`); no layout → `layout` null; a placement without a field is dropped; a placement key is spelled as in the dictionary; a picklist field carries its options (inactive included), others carry none |
 | `StandardFieldProvidersTest` | every `EntityType` has a provider with unique, non-reserved keys; `referenceTo` is set exactly on `REFERENCE` fields |
 | `RecordMapperTest`, `ContactRecordTest`, `DealRecordTest` | flat read shape and merge-patch write for each entity |
 

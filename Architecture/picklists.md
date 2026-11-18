@@ -1,8 +1,8 @@
-# Picklists — Spec
+# Picklists — Architecture Reference
 
-**Status:** Proposal, nothing implemented · **Scope:** a `PICKLIST` field type for standard and custom fields, tenant-editable values, seeded defaults for Company Type, Industry and Employee Range and Contact Salutation
-**Date:** 2026-11-08 · **Builds on (as-built):** `Architecture/custom-fields.md`, `Architecture/entity-layouts.md`, `Architecture/multitenancy.md`, `Architecture/roles-and-permissions.md`
-**Code:** new package `picklists`; `entityModel`, `entitySchema`, `customFields`, `companies`, `contacts`, `V1__init.sql`; `Frontend/src/components/fields`, `Frontend/src/lib/entity`
+**Status:** Implemented & verified (§15) · **Scope:** the `PICKLIST` field type for standard and custom fields, tenant-editable values, seeded defaults for Company Type, Industry and Employee Range and Contact Salutation. The settings UI for editing values is not built yet (§12.2)
+**Last updated:** 2026-11-08 · **Builds on:** `Architecture/custom-fields.md`, `Architecture/entity-layouts.md`, `Architecture/multitenancy.md`, `Architecture/roles-and-permissions.md`
+**Code:** package `picklists`; `entityModel` (`FieldDataType`, `RecordMapper`), `entitySchema`, `customFields`, `companies`, `contacts`, `tenants.DemoTenantSeeder`, `V1__init.sql`; `Frontend/src/components/fields/PicklistField.tsx`, `Frontend/src/lib/entity/displayValue.ts`
 
 > A picklist field stores one **code** from a list the tenant controls. Every tenant's lists live
 > in one table, `app.picklist_values`, keyed by entity type and field key. Options are resolved
@@ -15,9 +15,9 @@
 > nothing distinguishes a standard list from a custom one.
 >
 > Records carry the code (`"technology"`) and the schema bundle carries the code → label mapping,
-> so renaming a label touches no record. The settings UI for editing values comes later, merged
-> into the entity settings page (§12.2). This spec builds the backend, the API that UI will use,
-> and the dropdown on record pages.
+> so renaming a label touches no record. The backend, the API the settings UI will use, and the
+> dropdown on record pages are built. The settings UI comes later, merged into the entity
+> settings page (§12.2).
 
 **Terms.** A **picklist** is the list belonging to one field: the `picklist_values` rows that
 share its entity type and field key. A **value** is one row: a **code** (stored on records,
@@ -46,18 +46,17 @@ select calls them, so they can't be confused with a record's value. "Value" is t
 
 ---
 
-## 2. Where we are
+## 2. Why picklists
 
-### 2.1 Today
+### 2.1 Before
 
-- `companies.type` (`varchar(100)`), `industry` (`varchar(100)`), `employee_range` (`varchar(30)`)
-  and `contacts.salutation` (`varchar(50)`) are free text with a text box in the UI. One tenant
-  ends up with `Software`, `software`, `SaaS` and `IT` for the same industry, and nothing can be
-  grouped or reported on.
-- Custom fields have no choice type. `custom-fields.md` §2 reserved `custom_field_definitions.config`
-  for "picklist options". This spec replaces that plan (§13).
-- `COUNTRY` is already a picklist in all but name: an ISO code on the record, names in
-  `public.iso_countries`. Its list is global and read-only; these lists belong to the tenant.
+- `companies.type`, `industry`, `employee_range` and `contacts.salutation` were free text with a
+  text box in the UI. One tenant ended up with `Software`, `software`, `SaaS` and `IT` for the
+  same industry, and nothing could be grouped or reported on.
+- Custom fields had no choice type. `custom-fields.md` §2 had reserved
+  `custom_field_definitions.config` for "picklist options". This design replaced that plan (§13).
+- `COUNTRY` is a picklist in all but name: an ISO code on the record, names in
+  `public.iso_countries`. Its list is global and read-only; picklists belong to the tenant.
 
 ### 2.2 Picklist, or a table of its own?
 
@@ -84,28 +83,25 @@ in a field → a picklist.
 | The value's uuid | Free | Opaque without a join | Opaque ids in every payload | Only as text, and a slot can't carry an FK | ❌ |
 | **A code** (`"food_beverage"`) | Free | Readable; join for the label | Stable, readable keys | Yes | ✅ |
 
-The large CRMs agree. Salesforce stores a value's API name, which is separate from its label.
-HubSpot stores an option's internal value, and Dynamics stores an integer per option. All of
-them store a stable key, and none stores the label.
-
 **Code rules**
 
 - `^[a-z0-9]+(_[a-z0-9]+)*$`, at most 50 characters: `technology`, `food_beverage`, `1_10`.
-- Unique within its picklist and **write-once**, like `field_key`. Users see the label; a code
-  is never renamed.
+  `PicklistCodes.matchesPattern` and the CHECKs on both tables say the same.
+- Unique within its picklist and **write-once**, like `field_key` (`updatable = false` on
+  `PicklistValue.code`). Users see the label; a code is never renamed.
 - Case-sensitive: `"Technology"` is not a valid Industry. Strict, so the database holds one spelling.
 - Derived from the label when a tenant adds a value without one (§10.3). Seed codes are written out.
 
-Every column holding a standard picklist must fit 50 characters. Three already do;
-**`employee_range` widens from `varchar(30)` to `varchar(50)`**. A custom picklist's slot is
-`varchar(255)`.
+Every column holding a standard picklist fits 50 characters: `type` and `industry` are
+`varchar(100)`, `salutation` `varchar(50)`, and `employee_range` was widened from `varchar(30)` to
+`varchar(50)`. A custom picklist's slot is `varchar(255)`.
 
 ---
 
 ## 4. Data model (D2, D3)
 
-Both tables go in `V1__init.sql`: the reference table with the other `public` data, the tenant
-table after `app.custom_field_definitions`. Then `make db-reset` (dev-phase policy).
+Both tables are in `V1__init.sql`: the reference table with the other `public` data (before
+`iso_countries`), the tenant table right after `app.custom_field_definitions`.
 
 ```
 which fields are picklists            custom: custom_field_definitions.data_type = 'PICKLIST'
@@ -116,7 +112,7 @@ public.standard_picklist_values ──copied at provisioning──► app.pickli
                                                                        ┊
                                    matched by (entity_type, field_key) + code in RecordMapper, no FK
                                                                        ┊
-                            app.companies.industry = 'technology'      app.companies.cf_text_07 = 'referral'
+                            app.companies.industry = 'technology'      app.companies.cf_text_01 = 'referral'
                                (standard field)                           (custom field "lead_source")
 ```
 
@@ -134,7 +130,7 @@ create table app.picklist_values
     entity_type varchar(50)  not null
         constraint ck_picklist_values_entity_type check (entity_type in ('COMPANY', 'CONTACT', 'DEAL')),
     field_key   varchar(100) collate app.case_insensitive not null, -- standard key or custom field_key
-    code        varchar(50)  not null
+    code        varchar(50)  not null                               -- stored on records (write-once)
         constraint ck_picklist_values_code check (code ~ '^[a-z0-9]+(_[a-z0-9]+)*$'),
     label       varchar(100) collate app.case_insensitive not null,
     sort_order  int          not null,
@@ -154,10 +150,11 @@ create table app.picklist_values
   field's own spelling. Standard and custom keys share one keyspace per entity
   (`StandardFieldRegistry.reservedKeysFor`), so two fields can't share a picklist by accident.
 - `uq_picklist_values_code` leads with `(tenant_id, entity_type, field_key)`. It serves both
-  reads, all of an entity's values and one field's, so no extra index is needed.
+  reads, all of an entity's values and one field's, so there's no extra index.
 - The flag is `active` rather than `archived_at`. Switching a value off and on again is a routine
   toggle, not a step towards a purge.
-- `sort_order` isn't unique: the order is whatever the last `PUT` sent.
+- `sort_order` isn't unique: the order is whatever the last `PUT` sent (positions 1..n). The
+  repository orders by `sort_order, code`, so the bundle and its ETag stay deterministic.
 - `label` is unique ignoring case (`Retail` and `retail` clash). The collation affects
   comparison only; the label keeps the case it was typed in.
 
@@ -172,7 +169,7 @@ The values a new tenant's standard picklists start with. Global reference data, 
 ```sql
 create table public.standard_picklist_values
 (
-    entity_type varchar(50)  not null, -- entity_type and field_key: held to the providers by the verifier
+    entity_type varchar(50)  not null,
     field_key   varchar(100) collate app.case_insensitive not null,
     code        varchar(50)  not null
         constraint ck_spv_code check (code ~ '^[a-z0-9]+(_[a-z0-9]+)*$'),
@@ -184,18 +181,13 @@ create table public.standard_picklist_values
 );
 
 grant select on public.standard_picklist_values to blusimian_app;
-
-insert into public.standard_picklist_values (entity_type, field_key, code, label, sort_order)
-values ('COMPANY', 'type', 'prospect', 'Prospect', 1),
-       ('COMPANY', 'type', 'customer', 'Customer', 2),
-       …
-       ('CONTACT', 'salutation', 'prof', 'Prof.', 6);
+-- then the 54 seed rows of §8.2
 ```
 
 The code and label constraints mirror `app.picklist_values`, so anything the seed holds copies
 cleanly. `entity_type` and `field_key` get no CHECK: the verifier (§8.4) holds every seeded pair
 to a standard `PICKLIST` field, which is stricter than an entity list, and adding an entity type
-then needs no edit here. The values are in §8.2.
+then needs no edit here.
 
 ### 4.3 Why there's no picklist table
 
@@ -209,7 +201,7 @@ covered without it:
 | say that a field is a picklist | The definition's `data_type`, or the provider: one source each |
 | be what a `PUT` locks | `CustomFieldService.lockEntityFields`, the advisory lock field creation and role saves already take (§10.5) |
 | cascade its values away on a purge | The purge deletes by `(entity_type, field_key)` (§9.3) |
-| hold a picklist-level setting later | A custom field's definition. A standard field's provider, if the setting is code-owned. §17 covers a tenant-adjustable one |
+| hold a picklist-level setting later | A custom field's definition. A standard field's provider, if the setting is code-owned. §16 covers a tenant-adjustable one |
 
 The one cost is orphans. If a field stops being a picklist (a provider change, or a purge that
 forgets its values), its rows stay behind. They do no harm, because only `PICKLIST` fields are
@@ -250,46 +242,47 @@ the column once filters exist.
 
 ## 5. Backend
 
-### 5.1 What changes in existing code
+### 5.1 What changed in existing code
 
-Small on purpose. `FieldDescriptor`, `EntityFieldDictionary` and `CustomFieldDescriptors` don't change.
+Small on purpose. `FieldDescriptor`, `EntityFieldDictionary` and `CustomFieldDescriptors` didn't change.
 
 | Where | Change |
 |---|---|
 | `FieldDataType` | `PICKLIST(CustomFieldSlots.POOL_TEXT, String.class, null)`: text pool, arrives as a JSON string, no format |
-| `CompanyStandardFieldProvider`, `ContactStandardFieldProvider` | `type`, `industry`, `employeeRange` and `salutation` change their data type to `PICKLIST`. `employeeRange` becomes `withMaxLength(50)` |
-| `RecordMapper.apply` | One check after conversion, for `PICKLIST` fields only (§6) |
-| `EntitySchemaService` / `SchemaFieldResponse` | The bundle carries each picklist field's options (§7) |
-| `CustomFieldDefinitionRequest`, `CustomFieldService`, `CustomFieldCreated` | Options on create, carried on the event (§9.1) |
-| `V1__init.sql` | §4.1 and §4.2; `ck_cfd_data_type` gains `'PICKLIST'`, `ck_cfd_type_matches_slot` gains `when 'PICKLIST' then column_name like 'cf\_text\_%'`; `employee_range varchar(50)` |
+| `CompanyStandardFieldProvider`, `ContactStandardFieldProvider` | `type`, `industry`, `employeeRange` and `salutation` have data type `PICKLIST`. `employeeRange` is `withMaxLength(50)` |
+| `RecordMapper` | Injects `PicklistLookup`. `apply` checks each `PICKLIST` value after conversion (§6) |
+| `EntitySchemaService` / `SchemaFieldResponse` | The bundle carries each picklist field's `options` (§7) |
+| `CustomFieldDefinitionRequest`, `CustomFieldOptionRequest`, `CustomFieldService`, `CustomFieldCreated` | Options on create, carried on the event (§9.1) |
+| `DemoTenantSeeder` | Acme's `lead_source` is a `PICKLIST` (Web, Referral, Event, Partner, Cold outreach, Other) |
+| `V1__init.sql` | §4.1 and §4.2; `ck_cfd_data_type` gains `'PICKLIST'`, `ck_cfd_type_matches_slot` gains `when 'PICKLIST' then column_name like 'cf\_text\_%'`; `employee_range varchar(50)`; the `config` comment no longer mentions picklist options |
 
-A standard field's declaration changes by one word:
+A standard field's declaration changed by one word:
 
 ```java
 FieldDescriptor.of("industry", "Industry", FieldDataType.PICKLIST, String.class,
         Company::getIndustry, Company::setIndustry).withMaxLength(100),
 ```
 
-The keys stay the same, so the permission columns (`industry_read`, …), layouts and
+The keys stayed the same, so the permission columns (`industry_read`, …), layouts and
 `FieldPermissionCatalog` are untouched.
 
-### 5.2 New package `picklists`
+### 5.2 Package `picklists`
 
 | File | Role |
 |---|---|
-| `PicklistValue` | `@Entity` on `app.picklist_values`. `entityType`, `fieldKey` and `code` are `updatable = false`; `relabel`, `moveTo`, `activate`/`deactivate` |
-| `PicklistValueRepository` | `findByEntityTypeOrderBySortOrderAsc(type)`, `findByEntityTypeAndFieldKeyOrderBySortOrderAsc(type, key)` |
-| `PicklistOption` | Record `(code, label, active)`: one option as the bundle serves it |
-| `EntityPicklists` | Immutable: one entity's options, by field key (case-insensitive). `optionsFor(key)` and `allows(key, value, current)` (§6) |
-| `PicklistLookup` | **The resolver.** `forEntity(type)` → `EntityPicklists`, in one query. The same path for standard and custom fields |
-| `PicklistService` | Admin side: `listFor(type)` for the `GET`, `replace(type, fieldKey, request)` for the `PUT`, `seed(type, fieldKey, values)` for a new custom field |
-| `PicklistCodes` | Pure functions: derive a code from a label and deduplicate it (§10.3) |
+| `PicklistValue` | `@Entity` on `app.picklist_values`. `entityType`, `fieldKey` and `code` are `updatable = false`; `relabel`, `moveTo`, `activate`/`deactivate`, `toOption` |
+| `PicklistValueRepository` | `findByEntityTypeOrderBySortOrderAscCodeAsc(type)`, `findByEntityTypeAndFieldKeyOrderBySortOrderAscCodeAsc(type, key)`. `code` is the tiebreaker (§4.1) |
+| `PicklistOption` | Record `(code, label, active)`: one option as the bundle and the API serve it |
+| `EntityPicklists` | Immutable: one entity's options, by field key (case-insensitive). `optionsFor(key)` and `allows(key, value, current)` (§6). `EMPTY` for an entity without picklists |
+| `PicklistLookup` | **The resolver.** `forEntity(type)` → `EntityPicklists`, in one read-only query. The same path for standard and custom fields |
+| `PicklistService` | Admin side: `listFor(type)` for the `GET`, `replace(type, fieldKey, request)` for the `PUT`, `seed(type, fieldKey, options)` for a new custom field (`propagation = MANDATORY`). The §10.2 rules are the static `validate` |
+| `PicklistCodes` | Pure functions: the code pattern, and deriving and deduplicating a code (§10.3) |
 | `StandardPicklistsInitializer` | `TenantInitializer`: copies the reference table into the new tenant (§8.3) |
 | `StandardPicklistsVerifier` | Refuses to start if the reference table and the providers disagree (§8.4) |
 | `CustomFieldPicklists` | Listens to `CustomFieldCreated` and seeds a new custom picklist (§9.1), as `roles.RequiredFieldGrants` listens for required fields |
 | `PicklistController` | §10.1 |
-| `dto/` | `PicklistResponse` (`entityType`, `fieldKey`, `label`, `options` as `PicklistOption`s, the bundle's shape); `ReplacePicklistRequest` (`options`); `PicklistOptionRequest` (`code` optional, `label`, `active`) |
-| `exception/PicklistNotFoundException` | 404 `NOT_FOUND`. A broken request rule is a `BadRequestException(VALIDATION_ERROR, …)` with details per value, as on records |
+| `dto/` | `PicklistResponse` (`entityType`, `fieldKey`, `label`, `options` as `PicklistOption`s, the bundle's shape); `ReplacePicklistRequest` (`options`); `PicklistOptionRequest` (`code` optional, `label`, `active` optional, default true) |
+| `exception/PicklistNotFoundException` | 404 `NOT_FOUND`. A broken request rule is a `BadRequestException(VALIDATION_ERROR, …)` with details per item, as on records |
 
 ### 5.3 Resolving options (D5)
 
@@ -299,18 +292,17 @@ standard list started from a seed.
 
 ```java
 public final class EntityPicklists {
-
     /** The field's options in display order, inactive included; empty if it has none. */
     public List<PicklistOption> optionsFor(String fieldKey) { … }
 
-    /** §6: null, an active code, or the code the record already holds. */
+    /** null, an active code, or the code the record already holds. Codes are case-sensitive. */
     public boolean allows(String fieldKey, Object value, Object current) { … }
 }
 
 @Component
 public class PicklistLookup {
-
     /** Every picklist value of the entity, grouped by field key: one query. */
+    @Transactional(readOnly = true)
     public EntityPicklists forEntity(EntityType entityType) { … }
 }
 ```
@@ -319,15 +311,15 @@ It has two runtime users, and each calls it at most once per request:
 
 | Caller | Uses | When |
 |---|---|---|
-| `RecordMapper.apply` | `allows` | Only if the request writes a `PICKLIST` field. Other writes, and every read, skip the query |
-| `EntitySchemaService.getSchema` | `optionsFor` | Once per bundle |
+| `RecordMapper.apply` | `allows` | Only if the request sets a `PICKLIST` field to a non-null value that passed conversion, length and format. Other writes, clearing a picklist, and every read skip the query |
+| `EntitySchemaService.getSchema` | `optionsFor` | Once per bundle, and not at all for an entity with no picklist field (DEAL today) |
 
 `PicklistService` uses it too, for the `GET`.
 
 Why a lookup and not options on the descriptor: the descriptor describes a field's shape and
 storage, which for a standard field is a constant. Options are tenant data, needed in exactly two
-places. Asking for them there keeps `FieldDescriptor` and its five constructor sites unchanged,
-and the layout editor's dictionary reads don't pay for a query they'd ignore. The write path and
+places. Asking for them there keeps `FieldDescriptor` and its constructor sites unchanged, and
+the layout editor's dictionary reads don't pay for a query they'd ignore. The write path and
 the bundle still can't disagree, because both read the same lookup.
 
 A picklist field with no rows has an empty list: an empty select, and a 400 for any new value.
@@ -343,21 +335,20 @@ picklists     ──► entityModel customFields platform tenants      (vocabula
                                                                   and the lock; TenantInitializer)
 customFields  ──► entityModel platform                           (unchanged: it doesn't know picklists exists)
 companies,
-contacts      ──► entityModel                                    (unchanged: only a data type changes)
+contacts      ──► entityModel                                    (unchanged: only a data type changed)
 ```
 
 `entityModel ⇄ picklists` is a package cycle of the same kind as `entityModel ⇄ customFields`
 (`custom-fields.md` §4): vocabulary one way, a lookup the other. `entitySchema` composing picklists
-into the bundle is what that slice is for: "composed at the edge while each feature stays
-modular". None of it is a bean cycle, and the build must keep it that way:
+into the bundle is what that slice is for. None of it is a bean cycle:
 
 ```
 RecordMapper, EntitySchemaService → PicklistLookup → PicklistValueRepository
-PicklistService → EntityFieldDictionary, CustomFieldService (lock only), PicklistLookup, repository
+PicklistService → EntityFieldDictionary, CustomFieldService (lock only), PicklistLookup, repository, JdbcClient
 CustomFieldService ⇢ publishes CustomFieldCreated ⇢ CustomFieldPicklists → PicklistService
 ```
 
-Two rules for the build:
+Two rules keep it that way:
 
 - **`PicklistLookup` injects its repository and nothing else.** It sits under `RecordMapper`.
 - **`CustomFieldService` must not inject `PicklistService`.** `PicklistService → EntityFieldDictionary
@@ -369,16 +360,18 @@ Two rules for the build:
 ## 6. Validation on write (D6, D7)
 
 `RecordMapper.apply` calls `EntityPicklists.allows(key, value, current)` for each `PICKLIST` field
-in the request, after conversion. It is true when any of these holds:
+the request sets, after conversion. It is true when any of these holds:
 
-1. `value` is `null`, i.e. the field is being cleared (required is checked separately, as for every field);
+1. `value` is `null`, i.e. the field is being cleared (required is checked separately, as for every
+   field). `apply` doesn't even look this up;
 2. `value` is the code of an **active** option of that field;
 3. `value` equals `current`, the code the record already holds.
 
 Otherwise the field gets `FieldError(key, "Not one of the options")`, collected with any other
-errors into the one 400.
+errors into the one 400. A value that already failed (wrong JSON type, too long) gets only that
+error, not this one as well.
 
-Rule 3 is what makes deactivation safe under merge-patch semantics. Say a client GETs a company
+Rule 3 is what makes deactivation safe under merge-patch semantics. A client GETs a company
 whose industry has been deactivated, edits the name and PUTs the whole record back. The industry
 arrives unchanged, so it saves. A *different* inactive code, or one that never existed, is
 refused. Rule 3 also means a stored code that isn't in the list at all never blocks a save that
@@ -403,10 +396,10 @@ writes don't lock the list. That's harmless: an inactive value is a valid stored
 
 ## 7. The schema bundle
 
-`EntitySchemaService.getSchema` calls `PicklistLookup.forEntity` once and passes the result to
-`toResponse`. `SchemaFieldResponse` gains `List<PicklistOption> options`. It is `null` except on a
-`PICKLIST` field, comes in `sort_order`, and **includes inactive values** (`"active": false`), so
-the client can label a record that holds one.
+`EntitySchemaService.getSchema` calls `PicklistLookup.forEntity` once (when the entity has a
+picklist field) and passes the result to `toResponse`. `SchemaFieldResponse` has
+`List<PicklistOption> options`. It is `null` except on a `PICKLIST` field, comes in `sort_order`,
+and **includes inactive values** (`"active": false`), so the client can label a record that holds one.
 
 ```json
 { "key": "industry", "label": "Industry", "dataType": "PICKLIST", "required": false,
@@ -416,10 +409,10 @@ the client can label a record that holds one.
 ```
 
 The ETag is a hash of the bundle's content, so editing a picklist changes it with no extra code,
-and the next revalidation gets a 200. The bundle stays "everything the client needs to render
-and validate a record".
+and the next revalidation gets a 200 (`PicklistApiTest` checks it). The bundle stays "everything
+the client needs to render and validate a record".
 
-Size: the seeded picklists add about 55 options across two bundles. A picklist is capped at 500
+Size: the seeded picklists add 54 options across two bundles. A picklist is capped at 500
 values (§10.2).
 
 ---
@@ -430,7 +423,7 @@ values (§10.2).
 
 Which standard fields are picklists is code: the provider's data type. What they start with is
 reference data in V1. After provisioning the values belong to the tenant, to edit like default
-layouts and roles. Changing the seed later affects new tenants only (§17).
+layouts and roles. Changing the seed later affects new tenants only (§16).
 
 ### 8.2 Seed values
 
@@ -443,9 +436,8 @@ Codes are the label in snake case unless shown.
 | Company · Employee Range (8) | 1–10 (`1_10`), 11–50 (`11_50`), 51–200 (`51_200`), 201–500 (`201_500`), 501–1,000 (`501_1000`), 1,001–5,000 (`1001_5000`), 5,001–10,000 (`5001_10000`), 10,001+ (`10001_plus`) |
 | Contact · Salutation (6) | Mr. (`mr`), Ms. (`ms`), Mrs. (`mrs`), Mx. (`mx`), Dr. (`dr`), Prof. (`prof`) |
 
-- **Industry** is the standard sales-oriented list: Salesforce's long-standing default Industry
-  list, with Real Estate added because that list lacks it. It is alphabetical, with Other last.
-  Check it against the current Salesforce list before seeding.
+- **Industry** is a short, sales-oriented list rather than a statistical taxonomy. It is
+  alphabetical, with Other last.
 - **Employee Range** uses LinkedIn's company-size bands, with its "1" and "2–10" merged. Data
   enrichment providers use the same bands, so imported data maps one to one. EU SME bands (1–9,
   10–49, 50–249, 250+, as KvK and Eurostat use) were the alternative. They don't line up with
@@ -465,21 +457,27 @@ from public.standard_picklist_values;
 `tenant_id` comes from its default, which is the tenant being provisioned, and RLS's `with
 check` confirms it. The initializer doesn't depend on the order of the other initializers.
 
-**Flush first.** At this point the tenant row is still a pending JPA insert, and
+**Flush first.** At this point the tenant row may still be a pending JPA insert, and
 `picklist_values.tenant_id` references it. Hibernate doesn't flush for a statement it didn't
-issue, so the initializer calls `entityManager.flush()` and then runs the copy through the
-`JdbcClient`. That is the same connection and tenant binding `lockEntityFields` uses.
+issue, so the initializer calls `repository.flush()` (which flushes the whole persistence
+context) and then runs the copy through the `JdbcClient`, on the same connection and tenant
+binding `lockEntityFields` uses.
 
 ### 8.4 Keeping the seed and the providers in step
 
 The seed is SQL and the providers are Java, so nothing at compile time ties them together.
 `StandardPicklistsVerifier` does it at startup, modelled on `PermissionColumnsVerifier`: a
-`SmartInitializingSingleton`, a query on a `public` table (no tenant needed), and a pure `compare`
-function that is unit-tested without a database. It refuses to start when:
+`SmartInitializingSingleton`, a query on a `public` table (no tenant needed), and a pure static
+`compare(fields, seed)` that is unit-tested without a database. It refuses to start when:
 
 - a standard `PICKLIST` field has no seed rows;
 - seed rows name an entity and key that isn't a standard `PICKLIST` field (spelled exactly as the provider spells it);
 - a seed code is longer than its field's `maxLength`.
+
+```
+Standard picklist values don't match the standard PICKLIST fields:
+  - CONTACT.salutation is a PICKLIST field with no rows in public.standard_picklist_values
+```
 
 Every `@SpringBootTest` boots through it, so a mismatch fails the test suite as well as startup.
 
@@ -510,25 +508,32 @@ unchanged. In the dev phase, editing V1 and `make db-reset` does the same.
 
 ### 9.1 Creating one
 
-`CustomFieldDefinitionRequest` gains `List<CustomFieldOptionRequest> options`, each a
-`(code, label)` with `code` optional:
+`CustomFieldDefinitionRequest` has `List<CustomFieldOptionRequest> options`, each a
+`(code, label)` with `code` optional. A five-argument constructor without it serves the other
+call sites.
 
 ```
 POST /api/custom-fields/company
-{ "fieldKey": "lead_source", "label": "Lead Source", "dataType": "PICKLIST", "sortOrder": 40,
+{ "fieldKey": "lead_source", "label": "Lead Source", "dataType": "PICKLIST",
+  "required": false, "sortOrder": 40,
   "options": [ { "label": "Web" }, { "label": "Referral" }, { "label": "Event" },
                { "label": "Cold outreach", "code": "outbound" } ] }
-201 → the definition, as today
+201 → the definition, as for any custom field
 ```
 
-1. `CustomFieldService.create` checks the shape: `PICKLIST` needs at least one option, and any
-   other type with `options` → 400. Both are checked before a slot is allocated.
+`required` and `sortOrder` must be in the body: they're primitives, and Jackson 3 refuses a
+missing primitive (400 "Malformed or invalid request body"). That holds for every custom field.
+
+1. `CustomFieldService.create` checks the shape: `PICKLIST` needs at least one option (400,
+   `options: Required`), and any other type with options is a 400 ("Only a PICKLIST field has
+   options"). Both are checked before the lock, so no slot is allocated.
 2. It allocates a text slot as it would for `TEXT`, saves the definition, and publishes
-   `CustomFieldCreated`. The event gains `fieldKey` and `options`. `roles.RequiredFieldGrants`
-   ignores both.
+   `CustomFieldCreated(entityType, fieldKey, columnName, required, options)`.
+   `roles.RequiredFieldGrants` ignores `fieldKey` and `options`.
 3. `picklists.CustomFieldPicklists` hears the event in the same transaction and calls
-   `PicklistService.seed`, which applies the same rules as a `PUT` (§10.2). A broken rule throws
-   out of `publishEvent`, so the whole create rolls back and the client gets the 400.
+   `PicklistService.seed`, which applies the same rules as a `PUT` (§10.2), with details at the
+   same paths (`options[1].label`). A broken rule throws out of `publishEvent`, so the whole
+   create rolls back, its slot with it, and the client gets the 400.
 
 `CustomFieldOptionRequest` lives in `customFields` and mirrors `picklists.PicklistOptionRequest`
 without `active`, because a new option is always active. The near-duplicate is the price of
@@ -548,10 +553,11 @@ dedicated `cf_pick_*` pool (§13).
 ### 9.3 Archive and purge
 
 - **Archive** (today's `DELETE`) leaves the values in place. The archived field is still
-  writable, and rule 3 needs its codes.
+  writable, and rule 3 needs its codes. It is gone from `GET /api/picklists` and the bundle, and
+  a `PUT` on it is a 404.
 - **Purge** (deferred, `custom-fields.md` §8) must also
   `delete from app.picklist_values where entity_type = ? and field_key = ?`, in the same
-  transaction and before the key is released. That goes on the purge checklist, next to resetting
+  transaction and before the key is released. It's on the purge checklist, next to resetting
   the slot's permission pair.
 
 ---
@@ -561,18 +567,19 @@ dedicated `cf_pick_*` pool (§13).
 ### 10.1 Endpoints
 
 Base path `/api/picklists`. `{entityType}` binds as everywhere else (`company`, case-insensitive),
-and `{fieldKey}` is case-insensitive.
+and `{fieldKey}` is case-insensitive; the response spells it as the field does.
 
 | Method | Path | Body | Success | Errors |
 |---|---|---|---|---|
-| GET | `/{entityType}` | — | 200 `[PicklistResponse]`: every picklist field of the entity (standard and active custom), with its label and options, inactive ones included | 400 unknown entityType |
+| GET | `/{entityType}` | — | 200 `[PicklistResponse]`: every picklist field of the entity (standard, then active custom), with its label and options, inactive ones included. `[]` for DEAL | 400 unknown entityType |
 | PUT | `/{entityType}/{fieldKey}` | `ReplacePicklistRequest` | 200 `PicklistResponse` | 400 a rule broken (§10.2); 404 no such picklist field |
 
 Both resolve fields through `EntityFieldDictionary`, which is already the truth about which
-fields exist, and values through `PicklistLookup`. A key that isn't there, belongs to an archived
-custom field, or isn't a `PICKLIST` is a 404. There's no POST or DELETE: a standard picklist exists
-because its provider declares it, and a custom one is created and removed with its field. Value
-ids never leave the server: the API identifies values by code, just as it never exposes `columnName`.
+fields exist, and values through `PicklistLookup` or the repository. A key that isn't there,
+belongs to an archived custom field, or isn't a `PICKLIST` is a 404. There's no POST or DELETE: a
+standard picklist exists because its provider declares it, and a custom one is created and removed
+with its field. Value ids never leave the server: the API identifies values by code, just as it
+never exposes `columnName`.
 
 ```
 PUT /api/picklists/company/industry
@@ -588,29 +595,43 @@ PUT /api/picklists/company/industry
 
 ### 10.2 What a PUT may do
 
-The array is the whole list, in display order. Compared with the stored list:
+The array is the whole list, in display order; positions are stored as 1..n. Compared with the
+stored list:
 
 | An item… | means |
 |---|---|
 | with a stored `code` | update its label, position and `active` |
-| without a `code` | a new value; the code is derived from the label (§10.3) |
+| without a `code` (absent or blank) | a new value; the code is derived from the label (§10.3) |
 | with a `code` not stored yet | a new value with that code (for imports and integrations) |
-| a stored code missing from the array | **400**: "Deactivate a value instead of removing it" |
+| a stored code missing from the array | **400**: `'shipping' is missing: deactivate a value instead of removing it` |
 
-The rules are all checked before anything is written. Every failure comes back in one 400, with
-details per item (`options[3].label`):
+`active` may be left out and then means `true`. Labels are trimmed. The rules are all checked
+before anything is written, and every failure comes back in one 400 with details per item:
 
-- a label is not blank, at most 100 characters, and unique in the list ignoring case. "Ignoring
-  case" must mean exactly what the column's collation means (`und-u-ks-level2`: case-insensitive,
-  accent-sensitive), so compare with a root-locale `java.text.Collator` at `SECONDARY` strength,
-  not `toLowerCase`. Where the two disagree, the deferred unique fires at commit, outside the
-  service, and the client gets a generic error instead of a field detail;
-- a given code matches the pattern, is at most 50 characters, and appears once;
-- at least one value is active;
-- the list has at most 500 values.
+| Rule | Detail |
+|---|---|
+| `options` is present | `options: Required` |
+| at most 500 values | `options: At most 500 values` |
+| an item is not `null` | `options[i]: Required` |
+| a label is not blank | `options[i].label: Required` |
+| a label is at most 100 characters | `options[i].label: Longer than 100 characters` |
+| a label is unique in the list ignoring case | `options[i].label: Same label as options[j]` |
+| a given code is at most 50 characters | `options[i].code: Longer than 50 characters` |
+| a given code matches the pattern | `options[i].code: Not a valid code: lower-case letters and digits, joined by single underscores` |
+| a given code appears once | `options[i].code: Appears more than once` |
+| at least one value is active | `options: At least one value must be active` |
+
+"Ignoring case" means exactly what the column's collation means (`und-u-ks-level2`:
+case-insensitive, accent-sensitive), so labels are compared with a root-locale
+`java.text.Collator` at `SECONDARY` strength with canonical decomposition, not `toLowerCase`.
+`Résellér` and `Reseller` are different labels; `PARTNER` and `Partner` aren't.
 
 `seed` applies the same rules to a new list. The database constraints (`ck_picklist_values_code`
-and both uniques) remain the backstop.
+and both uniques) remain the backstop. Where the Collator and ICU disagree, the deferred label
+unique would otherwise fire at commit, outside the service. So after writing, `PicklistService`
+flushes and runs `set constraints app.uq_picklist_values_label immediate`, which checks it on
+the spot; a clash there is a 400 (`options: Labels must be unique ignoring case`) rather than a
+failed commit.
 
 ### 10.3 Deriving a code
 
@@ -623,10 +644,12 @@ and both uniques) remain the backstop.
 5. An empty result (a label with no Latin letters or digits) becomes `value`. A code that's
    already taken, active or not, gets `_2`, `_3`, … appended, still within 50 characters.
 
-`"Food & Beverage"` → `food_beverage` · `"Café"` → `cafe` · `"日本"` → `value`.
+`"Food & Beverage"` → `food_beverage` · `"Café"` → `cafe` · `"日本"` → `value` ·
+`"Retail"` with `retail` taken → `retail_2`.
 
-It's only used for values that tenants add. The seed spells its codes out. The settings UI will
-later show the code read-only, as "API name".
+"Taken" is every stored code plus every code given in the request, so a derived code never
+collides with one an item states further down. It's only used for values that tenants add; the
+seed spells its codes out. The settings UI will show the code read-only, as "API name".
 
 ### 10.4 Permission
 
@@ -639,10 +662,11 @@ say so.
 ### 10.5 Concurrency
 
 `replace` first takes `CustomFieldService.lockEntityFields(entityType)`, the transaction-scoped
-advisory lock that field creation and role saves already use. Two admins saving the same list run
-one after the other, and the second sees the first's new codes. A save also can't interleave with
-a custom field being created on the same entity. On labels and order the last write wins, as in
-the layout editor. It's an admin action a few times a day, so serialising per entity costs nothing.
+advisory lock that field creation and role saves already use, and only then resolves the field
+and reads the stored list. Two admins saving the same list run one after the other, and the
+second sees the first's new codes. A save also can't interleave with a custom field being created
+on the same entity. On labels and order the last write wins, as in the layout editor. It's an
+admin action a few times a day, so serialising per entity costs nothing.
 
 ---
 
@@ -661,20 +685,20 @@ the layout editor. It's an admin action a few times a day, so serialising per en
 
 ## 12. Frontend
 
-### 12.1 Record pages (in this build)
+### 12.1 Record pages (built)
 
-| File | Change |
+| File | What it does |
 |---|---|
-| `lib/entity/types.ts` | `FieldDataType` gains `"PICKLIST"`; `SchemaField.options: PicklistOption[] \| null`; `type PicklistOption = { code: string; label: string; active: boolean }` |
-| `lib/entity/displayValue.ts` (new) | `displayValue(field, value)`: a picklist code → its option's label (an unknown code → the code itself), anything else → `text(value)`. The one place a code becomes a label |
-| `components/fields/PicklistField.tsx` | Display: `displayValue`. Input: the existing `Select`, with "—" (→ `null`), the active options, and the current value when it's inactive ("Shipping (inactive)") |
+| `lib/entity/types.ts` | `FieldDataType` has `"PICKLIST"`; `SchemaField.options: PicklistOption[] \| null`; `type PicklistOption = { code: string; label: string; active: boolean }` |
+| `lib/entity/displayValue.ts` | `displayValue(field, value)`: a picklist code → its option's label (an unknown code → the code itself), anything else → `text(value)`. The one place a code becomes a label |
+| `components/fields/PicklistField.tsx` | Display: `displayValue`. Input: the existing `Select`, with "—" (→ `null`), the active options, and the current value when it's inactive ("Shipping (inactive)"). A held code that isn't in the list at all is offered as itself. The `Select` treats `""` as "nothing chosen", so "—" uses the value `"-"`, which no code can be |
 | `components/fields/fieldTypes.tsx` | `PICKLIST: PicklistField`, the one registry line |
-| `components/entity/RecordDetail.tsx` | The header subtitle (`subtitleKeys`, `type` and `industry` for a company) prints `text(record[key])` today, which would be the code. It goes through `displayValue`, finding the field in the schema (`useEntitySchema`, already cached), not in the layout: the subtitle shows those keys even when the layout doesn't place them |
-| `features/companies/CompaniesPage.tsx` | The Type and Industry columns print raw values today. They call `displayValue`, and the page loads the schema with `useEntitySchema("COMPANY")` (one cached, ETagged request) |
-| `features/settings/layouts/editor/FieldChip.tsx` | The type-label map gains `PICKLIST: "Picklist"` (TypeScript will insist) |
-| `lib/entity/validateField.ts` | No new rule: the select can only produce valid codes, and the server is the authority. Its "mirrors RecordMapper rule for rule" comment says the option rule is left to the select |
+| `components/entity/RecordDetail.tsx` | The header subtitle (`subtitleKeys`, `type` and `industry` for a company) goes through `displayValue`, finding the field in the schema (`useEntitySchema`, already cached), not in the layout: the subtitle shows those keys even when the layout doesn't place them |
+| `features/companies/CompaniesPage.tsx` | The Type and Industry columns go through `displayValue`. The page loads the schema with `useEntitySchema("COMPANY")` (one cached, ETagged request) and shows "Loading…" until both it and the list are in, so no code flashes up |
+| `features/settings/layouts/editor/FieldChip.tsx` | The type-label map has `PICKLIST: "Picklist"` |
+| `lib/entity/validateField.ts` | No new rule: the select can only produce valid codes, and the server is the authority |
 
-### 12.2 Settings (later, not in this build)
+### 12.2 Settings (not built yet)
 
 The settings UI belongs on the entity settings page (`/settings/:entity`, `settings.md` §5), next
 to Layouts, built together with the custom fields UI:
@@ -696,7 +720,7 @@ The API in §10 is complete for it, so nothing on the backend waits for the UI.
 | Idea | Why not, or not yet |
 |---|---|
 | A parent `app.picklists` table, one row per picklist field | It would repeat what the definition and the provider already say, and would have to be seeded and kept in step with them. Its jobs are covered (§4.3) |
-| Options on `FieldDescriptor`, attached per request | It changes the record and its five constructor sites, and makes every dictionary read pay for a lookup, when only two callers need options (§5.3) |
+| Options on `FieldDescriptor`, attached per request | It changes the record and its constructor sites, and makes every dictionary read pay for a lookup, when only two callers need options (§5.3) |
 | Seed lists in Java (on the descriptor, or in a template class) | Provisioning would work the same, but the seed would sit on runtime code that never needs it, and a later backfill would have to repeat the values in SQL or loop over tenants in Java. In SQL, provisioning and migrations read one table |
 | Serve the seed until a tenant first edits (copy-on-write) | It saves the copy, but every lookup would need a fallback, which is two sources of truth, and SQL would find no labels for a tenant who never edited |
 | Options in `custom_field_definitions.config` (the earlier plan) | Standard fields have no definition row. Inside jsonb, codes and labels can't be kept unique, every edit rewrites the blob, and SQL can't join to labels |
@@ -713,99 +737,51 @@ The API in §10 is complete for it, so nothing on the backend waits for the UI.
 
 ---
 
-## 14. Known limits and settled questions
-
-### 14.1 Known limits
+## 14. Known limits
 
 | Limit | Why it's acceptable now | What changes it |
 |---|---|---|
-| No cache: one indexed query per bundle, and per write that touches a picklist | Custom field definitions are loaded the same way, on every `apply`. Sizes are small | A bulk import repeats the lookup per record. Cache both together, per tenant and entity, evicted by the admin writes |
-| The bundle carries every option inline | About 55 options today. The worst case (44 picklist fields × 500) is far beyond real use | If a tenant gets there, serve large lists from a per-field endpoint, as countries are |
+| No cache: one indexed query per bundle, and per write that sets a picklist | Custom field definitions are loaded the same way, on every `apply`. Sizes are small | A bulk import repeats the lookup per record. Cache both together, per tenant and entity, evicted by the admin writes |
+| The bundle carries every option inline | 54 options today. The worst case (44 picklist fields × 500) is far beyond real use | If a tenant gets there, serve large lists from a per-field endpoint, as countries are |
 | Sorting a list by a picklist field sorts by code | Lists have no sorting yet | The sort feature joins `picklist_values` (§4.5) to sort by label or position. Search by label must translate label → code first |
 | A mistaken value can only be deactivated | Values in use must never vanish (D6) | Delete-with-replace (§13) |
 | A deactivated value's label stays taken | Correct: re-adding "Retail" should mean reactivating it, not creating a twin | The settings UI should say so |
+| `EntityPicklists` matches field keys with `toLowerCase(Locale.ROOT)`, not the column's collation | Rows always carry the field's own spelling (seed, `seed`, `replace` all write it), so the two can't disagree in practice. `RecordMapper` matches keys the same way | — |
 
-### 14.2 Settled questions
-
-None are open.
-
-| Question | Decision |
-|---|---|
-| Employee range bands | LinkedIn's bands, with "1" and "2–10" merged (§8.2) |
-| Salutation | A picklist, like the three company fields |
-| Industry list | The short, sales-oriented list (§8.2), not a statistical taxonomy |
-| Backfilling a standard picklist added later | Its own migration, in SQL (§8.5) |
+Settled during design: LinkedIn's employee bands (§8.2); Salutation is a picklist like the three
+company fields; the short sales-oriented Industry list rather than a statistical taxonomy; a
+standard picklist added later is backfilled by its own migration (§8.5).
 
 ---
 
-## 15. Build plan
+## 15. Verification
 
-Each phase ends with `./mvnw test` green, so each can be committed on its own.
-
-| # | Phase | Steps | Done when |
-|---|---|---|---|
-| 1 | Schema | V1: `public.standard_picklist_values` with its seed rows (§4.2, §8.2), `app.picklist_values` (§4.1); `PICKLIST` in `ck_cfd_data_type` and `ck_cfd_type_matches_slot`; `employee_range varchar(50)`. Then `make db-reset` | The app starts and `RowLevelSecurityVerifier` passes |
-| 2 | Resolver | `FieldDataType.PICKLIST`; `PicklistValue`, repository, `PicklistOption`, `EntityPicklists`, `PicklistLookup`; the check in `RecordMapper.apply`; `options` in the bundle | `EntityPicklistsTest` and `RecordMapperTest` cover §6 |
-| 3 | Standard picklists | The four providers' data types; `StandardPicklistsInitializer`; `StandardPicklistsVerifier`; fix the tests that write free text into those fields | The verifier passes; a new tenant has the four lists; `"Software"` as industry is a 400; the bundle carries the options |
-| 4 | Admin API | `PicklistCodes`, `PicklistService` (`listFor`, `replace`, `seed`), controller, DTOs, exception | `PicklistCodesTest` and `PicklistApiTest` pass; the bundle's ETag changes after a `PUT` |
-| 5 | Custom picklists | `options` on `CustomFieldDefinitionRequest`, keeping a constructor without it for the existing call sites (the demo seeder, tests); `fieldKey` and `options` on `CustomFieldCreated`; `CustomFieldPicklists`; Acme's demo `lead_source` becomes a `PICKLIST` (Web, Referral, Event, Partner, Cold outreach, Other) | `CustomFieldPicklistTest` passes; Acme's Lead Source is a dropdown |
-| 6 | Frontend | §12.1, including the record header and the companies list | `npm run build` and `npm test` pass; company and contact pages show dropdowns; no code is shown where a label belongs |
-| 7 | Verify | Full suites, then §15.3 by hand | — |
-| 8 | Docs | §16, then turn this file into `Architecture/picklists.md` as the as-built reference | — |
-
-### 15.1 Tests to add
+**Automated.** `./mvnw test`: 199 tests green (148 before this build; 51 new or extended).
+`npm run build` (including `tsc --noEmit`) and `npm test`: 56 tests green (52 before).
 
 | Test | Covers |
 |---|---|
-| `EntityPicklistsTest` | The three rules of §6; keys matched case-insensitively; an unknown field has no options |
-| `RecordMapperTest` (extended) | An active code saves; unknown, wrong case and `""` are refused; an inactive code is refused on create but kept when unchanged; `null` clears; no lookup when no picklist field is written |
-| `StandardPicklistsVerifierTest` | `compare`, without a database: a field with no seed, a seed for a field that isn't a picklist, a code over `maxLength` |
-| `PicklistCodesTest` | Derivation, accents, empty → `value`, the dedup suffix, the 50-character cut |
-| `PicklistApiTest` (real Postgres, as `blusimian_app`) | Provisioning copies every seed row; every row of §10.2; swapping two labels in one `PUT` (the deferred unique); 404 for a field that isn't a picklist and for an archived custom one |
-| `CustomFieldPicklistTest` | Create with options; `PICKLIST` without options → 400; options on `TEXT` → 400; a bad option rolls back the field and frees its slot |
-| `TenantIsolationTest` (extended) | Tenant B sees none of A's values, and A's edits to Industry don't change B's list |
+| `EntityPicklistsTest` | The three rules of §6; codes case-sensitive and `""` refused; keys matched case-insensitively; option order kept, inactive included; an unknown field has no options |
+| `RecordMapperTest` (extended) | An active code saves; unknown, wrong case and `""` are refused with one error; an inactive code is refused on create but kept when unchanged; `null` clears without a lookup; no lookup when no picklist field is written; a custom picklist is checked the same way; a wrong JSON type is one error. The generic merge-patch tests moved from `industry` to `legalName` |
+| `ContactRecordTest`, `DealRecordTest`, `EntitySchemaServiceTest` (extended) | `salutation` takes a code, not the label; the bundle carries options on picklist fields only (inactive included, key matched case-insensitively) |
+| `StandardPicklistsVerifierTest` | `compare`, without a database: a match passes; a field with no seed; a seed for a field that isn't a picklist; a key spelled differently from the provider; a code over `maxLength` |
+| `PicklistCodesTest` | Derivation, accents, empty → `value`, the dedup suffix, the 50-character cut with no trailing `_`, every derived code matches the pattern |
+| `PicklistApiTest` (real Postgres, as `blusimian_app`) | Provisioning copies every seed row; the `GET` shapes; free text on a record is a 400 and a code saves; the bundle carries the options; every row of §10.2 (relabel, reorder, deactivate, add with and without a code, the dedup suffix, a missing stored code, all field errors in one 400 with nothing written, accents vs case, no active value, the 500 cap); swapping two labels in one `PUT` (the deferred unique); a case-insensitive key in the path; 404 for a field that isn't a picklist; the bundle's ETag changes after a `PUT` |
+| `CustomFieldPicklistTest` | Create with options, in a text slot, served by `GET` and the bundle; a record takes its codes only; `PICKLIST` without options → 400 and no slot taken; options on `TEXT` → 400; a bad option rolls back the field and frees its slot; an archived picklist field is a 404 and gone from the `GET`, while a record holding its code still saves |
+| `TenantIsolationTest` (extended) | A's relabelled Industry and new custom picklist don't reach B; B's raw SQL sees exactly its own 54 rows |
+| `displayValue.test.ts` | A code shows as its label (inactive too); an unknown code as itself; other fields as text |
 
-### 15.2 Existing tests to update
-
-`RecordMapperTest` writes `"Software"` / `"Hardware"` into `industry`, and `ContactRecordTest`
-writes `"Dr."` into `salutation`. Move them to another `TEXT` field, or to codes with a stub
-`PicklistLookup`.
-
-### 15.3 By hand
-
-1. `make db-reset`, start the app, log in as alice. Company Type, Industry and Employee Range, and
-   Contact Salutation, are dropdowns with the seeded values.
-2. Save a company with an industry. The record JSON holds `"technology"`. The page, its header
-   subtitle and the companies list all show "Technology".
-3. `PUT` a new label ("Technology" → "Tech & Software"). After a reload the page shows the new
-   label, and the record JSON still says `technology`.
-4. Deactivate it. The company still shows it, marked inactive in edit mode. Saving another field
-   on that company works, and a new company can't pick it.
-5. Acme's Lead Source is a dropdown. bob's company form has no Lead Source, and his Industry list
-   doesn't have alice's change.
-6. `PATCH` with `"industry": "Software"` → 400 with a field error.
-7. In `make db-shell`, delete Salutation's rows from `public.standard_picklist_values` and
-   restart: the verifier refuses to start and names the field. `make db-reset` afterwards.
+**By hand, against a fresh database** (backend on a spare port, via the API): Acme's lists and
+its Lead Source picklist are there; a company saved with `technology` holds the code; after
+relabelling it to "Tech & Software" the record still holds `technology` and the bundle has the
+new label; after deactivating it, the whole record PUT back still saves and a new company can't
+pick it; bob sees no Lead Source and the original label; `"industry": "Software"` is a 400; with
+Salutation's seed rows deleted, startup refuses and names `CONTACT.salutation`. Not checked in a
+browser: the dropdowns, the "(inactive)" marking and the labels in the header and list.
 
 ---
 
-## 16. Docs and comments to update
-
-| Where | Change |
-|---|---|
-| `Architecture/custom-fields.md` | §2: `config` no longer holds picklist options, and the `data_type` CHECK gains `PICKLIST`. §3: the `FieldDataType` row. §4: the graph gains `entityModel → picklists` and `entitySchema → picklists`. §7 step 5: `CustomFieldCreated` carries `fieldKey` and `options`, and `picklists` listens too. §8: purge also deletes the field's values. §10: picklists come off "Deferred". §12: a new entity type also extends `ck_picklist_values_entity_type` |
-| `entityModel/package-info.java` | Its one exception to "depends on nothing of ours" (`RecordMapper` → `customFields`) gains `RecordMapper` → `picklists.PicklistLookup` |
-| `Architecture/entity-layouts.md` | The bundle's field shape gains `options` |
-| `Architecture/frontend-entity-pages.md` | The field registry gains `PICKLIST` |
-| `Architecture/multitenancy.md` | §5.7: the new tenant table and the new `public` table |
-| `Architecture/roles-and-permissions.md` | §2.5: `manage_custom_fields` also covers picklist values. §3.8: `lockEntityFields` is also taken by picklist saves |
-| `WIP/job-title-layouts.md` §3 | The two rows about picklists: custom picklists don't use `config`, and `Company.type` and `industry` are picklists now |
-| `V1__init.sql` | The header's schema layout (`public` also holds `standard_picklist_values`); the `config` comment on `custom_field_definitions` ("picklist options, …") |
-| `FieldDataType.java`, `CustomFieldCreated.java` | Their Javadoc: `PICKLIST`; the new event components |
-
----
-
-## 17. Recipes (after this lands)
+## 16. Recipes
 
 | To | Do |
 |---|---|

@@ -1,7 +1,7 @@
 # Roles & Permissions — Architecture Reference
 
 **Status:** Implemented & verified (§9): stored and editable, not enforced yet · **Scope:** roles, their permission tables, role assignments, and the Roles and Users settings pages. Resolving what a user may do, and enforcing it, are out of scope (§7 lists only what this design requires of them).
-**Last updated:** 2026-10-31 · **Builds on:** `Architecture/multitenancy.md`, `Architecture/custom-fields.md`, `Architecture/entity-layouts.md`, `Architecture/settings.md`
+**Last updated:** 2026-11-08 · **Builds on:** `Architecture/multitenancy.md`, `Architecture/custom-fields.md`, `Architecture/entity-layouts.md`, `Architecture/settings.md`
 **Companion:** `WIP/job-title-layouts.md`. Layouts follow a user's job title, so nothing here touches layouts.
 **Code:** package `roles`; `users`, `tenants`, `customFields`, `V1__init.sql`; `Frontend/src/features/settings/roles`, `features/settings/users`, `lib/roles`, `lib/users`
 
@@ -212,7 +212,7 @@ create table app.app_permissions
 | `manage_roles` | writes on `/api/roles` |
 | `manage_job_titles` | writes on `/api/job-titles` (companion spec) |
 | `manage_layouts` | writes on `/api/entity-layouts` |
-| `manage_custom_fields` | writes on `/api/custom-fields` |
+| `manage_custom_fields` | writes on `/api/custom-fields` and `/api/picklists` (picklist values, `picklists.md` §10.4): whoever may add fields may edit their values. The Roles page can label it "Manage fields" |
 
 Whether the Settings link shows is derived (the caller holds any of these), so it needs no column of its own.
 
@@ -446,7 +446,7 @@ Spring runs an `@EventListener` on the publisher's thread, inside its transactio
 
 This is the only code that sets a bit to `true` without an admin asking, and it's narrow: required fields only, and only on roles that already hold Create. There's no way around it, because the alternatives are a role that silently can't create, or taking Create away from it.
 
-**Two admins at the same moment.** A role save and a required-field create could each miss the other's work, so both take the lock custom fields already use. That lock is the public `CustomFieldService.lockEntityFields(entityType)`, marked `@Transactional(propagation = MANDATORY)` because a transaction-scoped lock outside a transaction is released at once. `RoleService.create` and `replace` take it for every `EntityType`, in enum order, before reading anything. Creating a field takes only one, so the two can't deadlock. Role saves then run one at a time within a tenant, which costs nothing for an admin action.
+**Two admins at the same moment.** A role save and a required-field create could each miss the other's work, so both take the lock custom fields already use. That lock is the public `CustomFieldService.lockEntityFields(entityType)`, marked `@Transactional(propagation = MANDATORY)` because a transaction-scoped lock outside a transaction is released at once. `RoleService.create` and `replace` take it for every `EntityType`, in enum order, before reading anything. Creating a field takes only one, so the two can't deadlock. Role saves then run one at a time within a tenant, which costs nothing for an admin action. A picklist save (`PicklistService.replace`) takes the same lock for its one entity, so it can't interleave with a field being created there either.
 
 **The database backstop.** For standard fields the rule is also the `ck_*_required` CHECK in V1. No CHECK can cover custom fields, because whether a slot is required depends on the tenant and lives in another table.
 

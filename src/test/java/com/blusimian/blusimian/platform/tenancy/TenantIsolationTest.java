@@ -8,6 +8,7 @@ import com.blusimian.blusimian.companyContacts.CompanyContactRequest;
 import com.blusimian.blusimian.companyContacts.CompanyContactService;
 import com.blusimian.blusimian.contacts.ContactService;
 import com.blusimian.blusimian.customFields.CustomFieldDefinitionRequest;
+import com.blusimian.blusimian.customFields.CustomFieldOptionRequest;
 import com.blusimian.blusimian.customFields.CustomFieldService;
 import com.blusimian.blusimian.customFields.exception.DuplicateCustomFieldKeyException;
 import com.blusimian.blusimian.deals.DealService;
@@ -17,6 +18,11 @@ import com.blusimian.blusimian.entityLayouts.dto.CreateEntityLayoutRequest;
 import com.blusimian.blusimian.entityLayouts.dto.EntityLayoutSectionRequest;
 import com.blusimian.blusimian.entityModel.EntityType;
 import com.blusimian.blusimian.entityModel.FieldDataType;
+import com.blusimian.blusimian.picklists.PicklistOption;
+import com.blusimian.blusimian.picklists.PicklistService;
+import com.blusimian.blusimian.picklists.dto.PicklistOptionRequest;
+import com.blusimian.blusimian.picklists.dto.PicklistResponse;
+import com.blusimian.blusimian.picklists.dto.ReplacePicklistRequest;
 import com.blusimian.blusimian.platform.security.LoginLookup;
 import com.blusimian.blusimian.roles.RoleAssignmentService;
 import com.blusimian.blusimian.roles.RoleService;
@@ -92,6 +98,8 @@ class TenantIsolationTest {
     CustomFieldService customFields;
     @Autowired
     EntityLayoutService layouts;
+    @Autowired
+    PicklistService picklists;
     @Autowired
     UserService users;
     @Autowired
@@ -217,6 +225,36 @@ class TenantIsolationTest {
 
         assertThatThrownBy(() -> callAs(a.id(), () -> customFields.create(EntityType.COMPANY, textField("region"))))
                 .isInstanceOf(DuplicateCustomFieldKeyException.class);
+    }
+
+    private List<PicklistOption> industriesOf(TestTenant tenant) {
+        return callAs(tenant.id(), () -> picklists.listFor(EntityType.COMPANY)).stream()
+                .filter(picklist -> picklist.fieldKey().equals("industry"))
+                .map(PicklistResponse::options)
+                .findFirst().orElseThrow();
+    }
+
+    @Test
+    void picklistValuesAreTheTenantsOwn() {
+        List<PicklistOptionRequest> relabelled = industriesOf(a).stream()
+                .map(option -> new PicklistOptionRequest(option.code(),
+                        option.code().equals("technology") ? "Tech & Software" : option.label(), option.active()))
+                .toList();
+        callAs(a.id(), () -> picklists.replace(EntityType.COMPANY, "industry", new ReplacePicklistRequest(relabelled)));
+        callAs(a.id(), () -> customFields.create(EntityType.COMPANY, new CustomFieldDefinitionRequest(
+                "lead_source", "Lead Source", FieldDataType.PICKLIST, false, 0,
+                List.of(new CustomFieldOptionRequest(null, "Web")))));
+
+        assertThat(industriesOf(a)).contains(new PicklistOption("technology", "Tech & Software", true));
+        assertThat(industriesOf(b)).contains(new PicklistOption("technology", "Technology", true));
+        // B's raw SQL sees exactly its own 54 seeded rows, none of A's
+        long rowsOfB = callAs(b.id(), () -> transaction.execute(status ->
+                jdbc.sql("select count(*) from app.picklist_values").query(Long.class).single()));
+        long leadSourcesOfB = callAs(b.id(), () -> transaction.execute(status ->
+                jdbc.sql("select count(*) from app.picklist_values where field_key = 'lead_source'")
+                        .query(Long.class).single()));
+        assertThat(rowsOfB).isEqualTo(54L);
+        assertThat(leadSourcesOfB).isZero();
     }
 
     // 8

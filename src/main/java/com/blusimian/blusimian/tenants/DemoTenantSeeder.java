@@ -1,6 +1,7 @@
 package com.blusimian.blusimian.tenants;
 
 import com.blusimian.blusimian.customFields.CustomFieldDefinitionRequest;
+import com.blusimian.blusimian.customFields.CustomFieldOptionRequest;
 import com.blusimian.blusimian.customFields.CustomFieldService;
 import com.blusimian.blusimian.entityLayouts.EntityLayoutService;
 import com.blusimian.blusimian.entityLayouts.dto.EntityLayoutResponse;
@@ -24,7 +25,7 @@ import java.util.UUID;
 
 /**
  * Dev data: provisions two tenants with fixed ids if they're missing, Acme (alice/alice,
- * with a Lead Source custom field) and Globex (bob/bob), so isolation is visible by hand.
+ * with a Lead Source custom picklist) and Globex (bob/bob), so isolation is visible by hand.
  */
 @Component
 @ConditionalOnProperty(name = "blusimian.demo-tenants.enabled", havingValue = "true")
@@ -65,10 +66,12 @@ class DemoTenantSeeder implements ApplicationRunner {
         return !TenantContext.callAs(tenant, () -> tenants.existsById(tenant.value()));
     }
 
-    /** A Lead Source field on companies, placed at the end of the default layout's first section. */
+    /** A Lead Source picklist on companies, placed at the end of the default layout's first section. */
     private void addLeadSource() {
-        customFields.create(EntityType.COMPANY,
-                new CustomFieldDefinitionRequest("lead_source", "Lead Source", FieldDataType.TEXT, false, 10));
+        List<CustomFieldOptionRequest> options = List.of("Web", "Referral", "Event", "Partner", "Cold outreach", "Other")
+                .stream().map(label -> new CustomFieldOptionRequest(null, label)).toList();
+        customFields.create(EntityType.COMPANY, new CustomFieldDefinitionRequest(
+                "lead_source", "Lead Source", FieldDataType.PICKLIST, false, 10, options));
 
         EntityLayoutResponse layout = layouts.resolve(EntityType.COMPANY).orElseThrow();
         List<EntityLayoutSectionRequest> sections = new ArrayList<>();
